@@ -18,7 +18,6 @@ const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 // --- FUNÇÕES PRINCIPAIS ---
 
-// Função para normalizar nomes (remove acentos e deixa em minúsculas)
 function normalizarNome(nome) {
     if (!nome) return '';
     return nome.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
@@ -77,8 +76,7 @@ async function processarMensagem(data) {
 
         if (tipo !== 'imageMessage') return;
 
-        // NOVO: Verifica se a imagem veio em base64 (essencial)
-        const base64Image = data.message?.imageMessage?.jpegThumbnail || data.base64; // Tenta pegar o thumbnail ou o base64 direto
+        const base64Image = data.message?.imageMessage?.jpegThumbnail || data.base64;
         if (!base64Image) {
             console.log("Imagem recebida, mas sem dados em base64. Verifique a configuração 'Webhook Base64' na Evolution API.");
             return;
@@ -120,14 +118,13 @@ async function processarMensagem(data) {
     }
 }
 
+// ############ A CORREÇÃO ESTÁ AQUI ############
 async function enviarRespostaWhatsApp(jidDestino, texto) {
     try {
-        // FORMATO DA MENSAGEM AJUSTADO PARA MAIOR COMPATIBILIDADE
+        // FORMATO DA MENSAGEM AJUSTADO PARA O FORMATO MAIS BÁSICO E COMPATÍVEL
         const payload = {
             number: jidDestino,
-            textMessage: {
-                text: texto
-            }
+            text: texto // A API ESTÁ PEDINDO A PROPRIEDADE "text" DIRETAMENTE
         };
         await axios.post(`${EVOLUTION_URL}/message/sendText/${INSTANCIA}`, payload, { 
             headers: { 
@@ -143,6 +140,7 @@ async function enviarRespostaWhatsApp(jidDestino, texto) {
         }
     }
 }
+// ############ FIM DA CORREÇÃO ############
 
 app.post('/webhook', (req, res) => {
     const data = req.body;
@@ -153,7 +151,7 @@ app.post('/webhook', (req, res) => {
 });
 
 app.get('/', (req, res) => {
-    res.send('Bot de pagamentos (v3 - robusto) está online!');
+    res.send('Bot de pagamentos (v4 - final) está online!');
 });
 
 const PORT = process.env.PORT || 3000;
