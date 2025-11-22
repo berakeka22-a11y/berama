@@ -18,8 +18,8 @@ function normalizarNome(nome) {
 async function enviarRespostaWhatsApp(destino, corpo, config) {
     try {
         const ultramsgAPI = axios.create({
-            baseURL: `https://api.ultramsg.com/${config.ULTRAMSG_INSTANCE}`,
-            params: { token: config.ULTRAMSG_TOKEN }
+            baseURL: `https://api.ultramsg.com/${config.API_INSTANCE}`,
+            params: { token: config.API_TOKEN }
         });
         const payload = { to: destino, body: corpo };
         console.log(`Enviando mensagem para ${destino}...`);
@@ -118,28 +118,28 @@ async function processarMensagem(data, config) {
     }
 }
 
-// --- ROTA DO WEBHOOK (O CORAÇÃO DA NOVA LÓGICA) ---
+// --- ROTA DO WEBHOOK ---
 app.post('/webhook', (req, res) => {
     // 1. CARREGA AS VARIÁVEIS AQUI, NO MOMENTO DO USO
     const config = {
         OPENAI_API_KEY: process.env.OPENAI_API_KEY, 
-        ULTRAMSG_INSTANCE: process.env.ULTRAMSG_INSTANCE,
-        ULTRAMSG_TOKEN: process.env.ULTRAMSG_TOKEN,
+        API_INSTANCE: process.env.API_INSTANCE, // NOME NOVO
+        API_TOKEN: process.env.API_TOKEN,       // NOME NOVO
         ADMIN_NUMBER: process.env.ADMIN_NUMBER
     };
 
-    // 2. LOG DE DEPURAÇÃO: VAMOS VER O QUE O BOT ESTÁ REALMENTE VENDO
-    console.log("--- INICIANDO DEPURAÇÃO DE VARIÁVEIS ---");
+    // 2. LOG DE DEPURAÇÃO
+    console.log("--- INICIANDO DEPURAÇÃO DE VARIÁVEIS (v22) ---");
     console.log("OPENAI_API_KEY existe?", !!config.OPENAI_API_KEY);
-    console.log("ULTRAMSG_INSTANCE existe?", !!config.ULTRAMSG_INSTANCE);
-    console.log("ULTRAMSG_TOKEN existe?", !!config.ULTRAMSG_TOKEN);
+    console.log("API_INSTANCE existe?", !!config.API_INSTANCE);
+    console.log("API_TOKEN existe?", !!config.API_TOKEN);
     console.log("ADMIN_NUMBER existe?", !!config.ADMIN_NUMBER);
     console.log("--- FIM DA DEPURAÇÃO ---");
 
     // 3. VERIFICA SE AS CHAVES FORAM CARREGADAS
-    if (!config.OPENAI_API_KEY || !config.ULTRAMSG_INSTANCE || !config.ULTRAMSG_TOKEN || !config.ADMIN_NUMBER) {
-        console.error("ERRO CRÍTICO NO WEBHOOK: Uma ou mais variáveis de ambiente não foram carregadas a tempo.");
-        return res.sendStatus(500); // Envia um erro para indicar a falha
+    if (!config.OPENAI_API_KEY || !config.API_INSTANCE || !config.API_TOKEN || !config.ADMIN_NUMBER) {
+        console.error("ERRO CRÍTICO NO WEBHOOK: Uma ou mais variáveis de ambiente não foram carregadas.");
+        return res.sendStatus(500);
     }
 
     // 4. SE TUDO ESTIVER OK, PROCESSA A MENSAGEM
@@ -158,7 +158,7 @@ app.post('/webhook', (req, res) => {
 
 // --- ROTA DE STATUS ---
 app.get('/', (req, res) => {
-    res.send('Bot de pagamentos (v21 - Anti-Race Condition) está online!');
+    res.send('Bot de pagamentos (v22 - Anti-Easypanel) está online!');
 });
 
 // --- INICIALIZAÇÃO DO SERVIDOR ---
