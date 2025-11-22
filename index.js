@@ -56,6 +56,7 @@ async function processarComando(comando, remetente, jidDestino) {
     }
 }
 
+// ############ A CORREÇÃO ESTÁ AQUI ############
 async function processarMensagem(data) {
     try {
         const remoteJid = data.key.remoteJid; 
@@ -70,25 +71,14 @@ async function processarMensagem(data) {
 
         if (tipo !== 'imageMessage') return;
 
-        // ############ A CORREÇÃO ESTÁ AQUI ############
-        // Usando o endpoint correto da sua API para baixar a mídia
-        const urlDownload = `${EVOLUTION_URL}/chat/downloadMedia`; 
-        // ############ FIM DA CORREÇÃO ############
+        // VOLTANDO AO MÉTODO SIMPLES: USAR A MINIATURA QUE JÁ VEM NA MENSAGEM
+        // A opção "Webhook Base64" na Evolution API precisa estar ATIVADA.
+        const base64Image = data.message?.imageMessage?.jpegThumbnail || data.base64;
         
-        console.log("Baixando imagem em alta qualidade...");
-        // O payload para este endpoint é o próprio objeto da mensagem
-        const downloadResponse = await axios.post(urlDownload, data.message, {
-            headers: { 'apikey': EVOLUTION_API_KEY },
-            responseType: 'arraybuffer' // Importante para receber o arquivo
-        });
-
-        // Converte o buffer do arquivo para base64
-        const base64Image = Buffer.from(downloadResponse.data).toString('base64');
         if (!base64Image) {
-            console.log("Falha ao baixar a imagem em alta qualidade.");
+            console.log("ERRO: Imagem recebida, mas sem dados em base64. Ative a opção 'Webhook Base64' na sua instância da Evolution API.");
             return;
         }
-        console.log("Imagem baixada com sucesso.");
 
         let listaAtual = JSON.parse(fs.readFileSync(ARQUIVO_LISTA, 'utf8'));
         const nomesPendentes = listaAtual.filter(c => c.status !== 'PAGO').map(c => c.nome).join(", ");
@@ -124,6 +114,7 @@ async function processarMensagem(data) {
         }
     }
 }
+// ############ FIM DA CORREÇÃO ############
 
 async function enviarRespostaWhatsApp(jidDestino, texto) {
     try {
@@ -148,7 +139,7 @@ app.post('/webhook', (req, res) => {
 });
 
 app.get('/', (req, res) => {
-    res.send('Bot de pagamentos (v9 - Finalíssimo) está online!');
+    res.send('Bot de pagamentos (v10 - Simplificado) está online!');
 });
 
 const PORT = process.env.PORT || 3000;
