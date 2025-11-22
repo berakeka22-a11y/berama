@@ -6,24 +6,16 @@ const OpenAI = require('openai');
 const app = express();
 app.use(express.json({ limit: '50mb' }));
 
-// -----------------------------------------------------------------------------
-// CONFIGURAÇÕES
-// -----------------------------------------------------------------------------
-
-// UltraMsg fixo (funciona mesmo com Easypanel bugado)
+// UltraMsg fixo
 const ULTRAMSG_INSTANCE = "instance151755";
 const ULTRAMSG_TOKEN = "idyxynn5iaugvpj4";
 
-// Variáveis do ambiente
+// Variáveis ambiente
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const ADMIN_NUMBER = process.env.ADMIN_NUMBER;
 
-// Arquivo da lista
+// Lista de pagamentos
 const ARQUIVO_LISTA = "./lista.json";
-
-// -----------------------------------------------------------------------------
-// INICIALIZAÇÃO
-// -----------------------------------------------------------------------------
 
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
@@ -32,9 +24,9 @@ const ultramsgAPI = axios.create({
     params: { token: ULTRAMSG_TOKEN }
 });
 
-// -----------------------------------------------------------------------------
-// FUNÇÕES DO BOT
-// -----------------------------------------------------------------------------
+// ---------------------------------------------------------------
+// FUNÇÕES
+// ---------------------------------------------------------------
 
 function normalizarNome(nome) {
     if (!nome) return '';
@@ -43,139 +35,123 @@ function normalizarNome(nome) {
 
 async function enviarRespostaWhatsApp(destino, corpo) {
     try {
-        console.log("→ Enviando resposta para", destino);
-        await ultramsgAPI.post('/messages/chat', { to: destino, body: corpo });
-        console.log("✔ Mensagem enviada");
+        await ultramsgAPI.post("/messages/chat", {
+            to: destino,
+            body: corpo
+        });
     } catch (e) {
-        console.log("Erro ao enviar:", e.response ? e.response.data : e.message);
+        console.log("Erro enviar:", e.response?.data || e.message);
     }
 }
 
 async function formatarEEnviarLista(destino, titulo) {
-    try {
-        const lista = JSON.parse(fs.readFileSync(ARQUIVO_LISTA, 'utf8'));
+    const lista = JSON.parse(fs.readFileSync(ARQUIVO_LISTA, "utf8"));
 
-        let txt = `📊 *${titulo}* 📊\n\n`;
-        lista.forEach((p, idx) => {
-            const icone = p.status === "PAGO" ? "✅" : "⏳";
-            txt += `${idx + 1}. ${p.nome} ${icone}\n`;
-        });
+    let msg = `📊 *${titulo}* 📊\n\n`;
+    lista.forEach((p, i) => {
+        msg += `${i + 1}. ${p.nome} ${p.status === "PAGO" ? "✅" : "⏳"}\n`;
+    });
 
-        txt += "\n💳 Chave PIX: sagradoresenha@gmail.com\nReferência: Mauricio Carvalho";
+    msg += "\n💳 Chave PIX: sagradoresenha@gmail.com";
 
-        await enviarRespostaWhatsApp(destino, txt);
-    } catch (e) {
-        console.log("Erro formatar lista:", e.message);
-    }
+    await enviarRespostaWhatsApp(destino, msg);
 }
 
-async function processarComando(body, remetente, destino) {
-    if (body.toLowerCase() === "!resetar") {
-        if (remetente !== `${ADMIN_NUMBER}@c.us`) {
-            console.log("→ Reset bloqueado para não admin");
-            return;
-        }
-
-        let lista = JSON.parse(fs.readFileSync(ARQUIVO_LISTA, 'utf8'));
+async function processarComando(body, from) {
+    if (body === "!resetar" && from === `${ADMIN_NUMBER}@c.us`) {
+        let lista = JSON.parse(fs.readFileSync(ARQUIVO_LISTA, "utf8"));
         lista.forEach(x => x.status = "PENDENTE");
         fs.writeFileSync(ARQUIVO_LISTA, JSON.stringify(lista, null, 2));
 
-        await formatarEEnviarLista(destino, "Lista Resetada");
+        await formatarEEnviarLista(from, "Lista Resetada");
     }
 }
 
-async function processarMensagem(data) {
-    try {
-        const { type, from, body, media } = data;
-        const destino = from;
+async function processarMensagem(msg) {
 
-        if (type === "chat") {
-            return await processarComando(body, from, destino);
-        }
+    const { type, body, from, media } = msg;
 
-        if (type !== "image") return;
+    // Comandos
+    if (type === "chat") {
+        await processarComando(body.trim().toLowerCase(), from);
+        return;
+    }
 
-        console.log("📸 Imagem recebida");
+    // Só processar imagens de comprovante
+    if (type !== "image") return;
 
-        const down = await axios.get(media, { responseType: 'arraybuffer' });
-        const base64Image = Buffer.from(down.data).toString('base64');
+    console.log("📸 Recebi comprovante");
 
-        let lista = JSON.parse(fs.readFileSync(ARQUIVO_LISTA, 'utf8'));
-        const pendentes = lista.filter(x => x.status !== "PAGO").map(x => x.nome);
+    // Download imagem
+    const img = await axios.get(media, { responseType: "arraybuffer" });
+    const base64Image = Buffer.from(img.data).toString("base64");
 
-        if (pendentes.length === 0) {
-            console.log("Todos pagos");
-            return;
-        }
+    // Carregar lista
+    let lista = JSON.parse(fs.readFileSync(ARQUIVO_LISTA, "utf8"));
+    const pendentes = lista.filter(x => x.status !== "PAGO").map(x => x.nome);
 
-        const ia = await openai.chat.completions.create({
-            model: "gpt-4o",
-            max_tokens: 100,
-            temperature: 0,
-            messages: [
-                {
-                    role: "system",
-                    content:
-                        `Analise o comprovante. Valor deve ser 75.00 e o nome um destes: [${pendentes.join(", ")}].
-                         Responda SOMENTE JSON:
-                         {"aprovado":true/false,"nomeEncontrado":"string ou null"}`
-                },
-                {
-                    role: "user",
-                    content: [
-                        {
-                            type: "image_url",
-                            image_url: { url: `data:image/jpeg;base64,${base64Image}` }
-                        }
-                    ]
-                }
-            ]
-        });
+    if (pendentes.length === 0) return;
 
-        const resultado = JSON.parse(
-            ia.choices[0].message.content.replace(/```json|```/g, "").trim()
-        );
-
-        console.log("🔍 Análise:", resultado);
-
-        if (resultado.aprovado && resultado.nomeEncontrado) {
-            const nomeIA = normalizarNome(resultado.nomeEncontrado);
-            const posicao = lista.findIndex(
-                x => normalizarNome(x.nome) === nomeIA
-            );
-
-            if (posicao !== -1) {
-                lista[posicao].status = "PAGO";
-                fs.writeFileSync(ARQUIVO_LISTA, JSON.stringify(lista, null, 2));
-                await formatarEEnviarLista(destino, "Lista Atualizada");
+    // IA analisando
+    const ia = await openai.chat.completions.create({
+        model: "gpt-4o",
+        max_tokens: 100,
+        temperature: 0,
+        messages: [
+            {
+                role: "system",
+                content:
+                    `Analise o comprovante. Valor deve ser 75.00 e nome um destes: [${pendentes.join(", ")}].
+                     Responda SOMENTE JSON: {"aprovado":true/false,"nomeEncontrado":"string ou null"}`
+            },
+            {
+                role: "user",
+                content: [
+                    {
+                        type: "image_url",
+                        image_url: { url: `data:image/jpeg;base64,${base64Image}` }
+                    }
+                ]
             }
-        }
+        ]
+    });
 
-    } catch (e) {
-        console.log("ERRO processarMensagem:", e.message);
+    const result = JSON.parse(
+        ia.choices[0].message.content.replace(/```json|```/g, "").trim()
+    );
+
+    console.log("🔍 IA:", result);
+
+    if (result.aprovado && result.nomeEncontrado) {
+        const nomeIA = normalizarNome(result.nomeEncontrado);
+        const pos = lista.findIndex(x => normalizarNome(x.nome) === nomeIA);
+
+        if (pos !== -1) {
+            lista[pos].status = "PAGO";
+            fs.writeFileSync(ARQUIVO_LISTA, JSON.stringify(lista, null, 2));
+            await formatarEEnviarLista(from, "Pagamento Confirmado!");
+        }
     }
 }
 
-// -----------------------------------------------------------------------------
-// WEBHOOK CORRIGIDO PARA ULTRAMSG
-// -----------------------------------------------------------------------------
+// ---------------------------------------------------------------
+// WEBHOOK ULTRAMSG CORRETO
+// ---------------------------------------------------------------
 
 app.post("/webhook", (req, res) => {
     try {
         const body = req.body;
 
-        console.log("📩 Webhook recebido:", JSON.stringify(body, null, 2));
+        console.log("📥 Recebido:", JSON.stringify(body, null, 2));
 
-        if (!body || !body.data) {
-            console.log("⚠️ Webhook sem data");
+        // UltraMsg envia:  { messages: [ {...} ] }
+        if (!body.messages || !Array.isArray(body.messages)) {
             return res.sendStatus(200);
         }
 
-        const data = body.data;
-
-        if (data.fromMe) return res.sendStatus(200);
-
-        processarMensagem(data);
+        body.messages.forEach(msg => {
+            if (!msg.fromMe) processarMensagem(msg);
+        });
 
         res.sendStatus(200);
     } catch (e) {
@@ -184,17 +160,8 @@ app.post("/webhook", (req, res) => {
     }
 });
 
-// -----------------------------------------------------------------------------
-// STATUS
-// -----------------------------------------------------------------------------
+app.get("/", (req, res) => res.send("Bot pagamentos UltraMsg OK"));
 
-app.get("/", (req, res) => {
-    res.send("Bot pagamentos UltraMsg Online v1.0");
-});
-
-// -----------------------------------------------------------------------------
-// INICIAR SERVIDOR
-// -----------------------------------------------------------------------------
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log("🚀 Rodando porta", PORT));
+app.listen(process.env.PORT || 3000, () =>
+    console.log("🚀 Rodando servidor")
+);
