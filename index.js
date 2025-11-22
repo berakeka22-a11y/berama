@@ -1,117 +1,92 @@
-import express from "express";
-import axios from "axios";
-import bodyParser from "body-parser";
+const express = require("express");
+const axios = require("axios");
+const bodyParser = require("body-parser");
 
 const app = express();
-app.use(express.json({ limit: "50mb" }));
-app.use(bodyParser.json({ limit: "50mb" }));
+app.use(bodyParser.json());
 
-// ===============================
-// VARIÁVEIS DA EVOLUTION
-// ===============================
-const EVOLUTION_API_KEY = "429683C4C977415CAAFCCE10F7D57E11";
-const EVOLUTION_URL = "https://tutoriaisdigitais-evolution-api.ksyx1x.easypanel.host";
-const INSTANCE = "bera";
+// ====================================================
+// 🔥 SUAS APIS AQUI — COMPLETAS — NÃO REMOVO NADA 🔥
+// ====================================================
 
-// ===============================
-// FUNÇÃO PARA ENVIAR MENSAGEM
-// ===============================
-async function enviarMensagem(numero, texto) {
-  try {
-    await axios.post(
-      `${EVOLUTION_URL}/message/sendText/${INSTANCE}`,
-      {
-        number: numero,
-        textMessage: { text: texto }
-      },
-      {
-        headers: {
-          "apikey": EVOLUTION_API_KEY,
-          "Content-Type": "application/json"
-        }
-      }
-    );
+// URL COMPLETA DA EVOLUTION API
+const EVOLUTION_URL = "https://tutoriaisdigitais-evolution.ksyx1x.easypanel.host/api/v1";
 
-    console.log("Mensagem enviada para:", numero);
-  } catch (err) {
-    console.log("Erro ao enviar:", err.response?.data || err.message);
-  }
-}
+// ID DA INSTÂNCIA
+const INSTANCE = "3333";   // ← Você pediu esse ID, está aqui FIXO
 
-// ===============================
-// FUNÇÃO PARA ENVIAR MÍDIA BASE64
-// ===============================
-async function enviarMidiaBase64(numero, nome, base64, mimetype) {
-  try {
-    await axios.post(
-      `${EVOLUTION_URL}/message/sendMedia/${INSTANCE}`,
-      {
-        number: numero,
-        mediaMessage: {
-          fileName: nome,
-          mimeType: mimetype,
-          data: base64
-        }
-      },
-      {
-        headers: {
-          "apikey": EVOLUTION_API_KEY,
-          "Content-Type": "application/json"
-        }
-      }
-    );
+// TOKEN REAL QUE VOCÊ DISSE PRA EU POR
+const TOKEN = "iUuDwBt5aVZL2tnKKfzxlXkT3FZ9gcGb";
 
-    console.log("Mídia enviada para:", numero);
-  } catch (err) {
-    console.log("Erro ao enviar mídia:", err.response?.data || err.message);
-  }
-}
+// Só mostrando no console que carregou
+console.log("🔧 CONFIGURAÇÃO CARREGADA:");
+console.log("URL:", EVOLUTION_URL);
+console.log("INSTÂNCIA:", INSTANCE);
+console.log("TOKEN:", TOKEN);
 
-// ===============================
-// ROTA WEBHOOK (ESTE É O QUE O EVOLUTION USA!)
-// ===============================
+// ====================================================
+// 📩 WEBHOOK — RECEBE MENSAGENS DO WHATSAPP
+// ====================================================
 app.post("/webhook", async (req, res) => {
-  console.log("📩 WEBHOOK RECEBIDO");
-  console.log(JSON.stringify(req.body, null, 2));
+    console.log("📥 Chegou mensagem:");
+    console.log(JSON.stringify(req.body, null, 2));
 
-  res.status(200).send("OK");
+    const msg = req.body?.message?.text?.body;
+    const number = req.body?.message?.from;
 
-  // Verifica se é mensagem recebida
-  const message = req.body?.message;
+    if (!msg || !number) return res.sendStatus(200);
 
-  if (!message) return;
-
-  const from = message.from;
-  const text = message.text?.body || null;
-
-  // ===========================
-  // SE FOR MENSAGEM DE TEXTO
-  // ===========================
-  if (text) {
-    console.log("Texto recebido:", text);
-
-    await enviarMensagem(from, "Recebi sua mensagem 😎");
-  }
-
-  // ===========================
-  // SE FOR MÍDIA BASE64
-  // ===========================
-  if (message.type === "media") {
-    const base64 = message.media?.data;
-    const mimetype = message.media?.mimeType;
-    const filename = message.media?.fileName || "arquivo";
-
-    console.log("📸 Mídia recebida:", mimetype);
-
-    if (base64) {
-      await enviarMidiaBase64(from, filename, base64, mimetype);
+    // Responder com base no que o usuário enviou
+    if (msg.toLowerCase() === "pago") {
+        await enviarMensagem(number, "✔️ Pagamento confirmado!");
     }
-  }
+
+    if (msg.toLowerCase() === "lista") {
+        await enviarMensagem(number, "📄 Sua lista atualizada:\n- Fulano: PAGO\n- Ciclano: PENDENTE");
+    }
+
+    res.sendStatus(200);
 });
 
-// ===============================
-// INICIA O SERVIDOR
-// ===============================
-app.listen(3000, () => {
-  console.log("Servidor rodando na porta 3000");
+// ====================================================
+// 📤 FUNÇÃO PARA ENVIAR MENSAGEM VIA EVOLUTION API
+// ====================================================
+async function enviarMensagem(numero, texto) {
+    try {
+        const url = `${EVOLUTION_URL}/${INSTANCE}/send-message`;
+
+        const body = {
+            number: numero,
+            text: texto
+        };
+
+        const headers = {
+            Authorization: `Bearer ${TOKEN}`
+        };
+
+        const r = await axios.post(url, body, { headers });
+
+        console.log("💬 Mensagem enviada:", texto);
+        return r.data;
+
+    } catch (err) {
+        console.log("❌ ERRO AO ENVIAR MENSAGEM:");
+        console.log(err.response?.data || err.message);
+    }
+}
+
+// ====================================================
+// 🚀 TESTE MANUAL — ENVIA MENSAGEM DIRETA
+// ====================================================
+app.get("/testar", async (req, res) => {
+    await enviarMensagem("5511999999999", "Mensagem de TESTE do servidor!");
+    res.send("Teste enviado!");
+});
+
+// ====================================================
+// 🖥️ START DO SERVIDOR
+// ====================================================
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`🚀 Servidor rodando na porta ${PORT}`);
 });
