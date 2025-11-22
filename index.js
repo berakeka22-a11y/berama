@@ -7,7 +7,7 @@ const app = express();
 app.use(express.json({ limit: '50mb' }));
 
 // --- SUAS CREDENCIAIS E CONFIGURAÇÕES ---
-const OPENAI_API_KEY = "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"; 
+const OPENAI_API_KEY = "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"; 
 const EVOLUTION_API_KEY = "429683C4C977415CAAFCCE10F7D57E11"; 
 const EVOLUTION_URL = "https://tutoriaisdigitais-evolution-api.ksyx1x.easypanel.host";
 const INSTANCIA = "bera"; 
@@ -16,7 +16,7 @@ const ADMIN_NUMBER = '5513991194730';
 
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-// --- FUNÇÕES PRINCIPAIS ---
+// --- O RESTANTE DO CÓDIGO PERMANECE O MESMO ---
 
 function normalizarNome(nome) {
     if (!nome) return '';
@@ -92,69 +92,4 @@ async function processarMensagem(data) {
                 { role: "system", content: `Analise o comprovante. Valor deve ser 75.00 e o nome um destes: [${nomesPendentes}]. Responda APENAS JSON: {"aprovado": boolean, "nomeEncontrado": "string ou null"}` },
                 { role: "user", content: [{ type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Image}` } }] },
             ],
-            max_tokens: 100, temperature: 0 
-        });
-
-        const resultado = JSON.parse(response.choices[0].message.content.replace(/```json|```/g, '').trim());
-        console.log("Análise OpenAI:", resultado);
-
-        if (resultado.aprovado === true && resultado.nomeEncontrado) {
-            const nomeNormalizadoIA = normalizarNome(resultado.nomeEncontrado);
-            const index = listaAtual.findIndex(c => normalizarNome(c.nome) === nomeNormalizadoIA);
-            
-            if (index !== -1 && listaAtual[index].status !== 'PAGO') {
-                listaAtual[index].status = "PAGO";
-                fs.writeFileSync(ARQUIVO_LISTA, JSON.stringify(listaAtual, null, 2));
-                console.log(`MEMÓRIA ATUALIZADA: ${listaAtual[index].nome} agora está PAGO.`);
-                
-                await formatarEEnviarLista(remoteJid, "Lista de Mensalistas Atualizada");
-            }
-        }
-    } catch (error) {
-        console.error("Erro no processarMensagem:", error.message);
-        if (error.response) {
-            console.error("Detalhes do erro da API:", error.response.data);
-        }
-    }
-}
-
-// ############ A CORREÇÃO ESTÁ AQUI ############
-async function enviarRespostaWhatsApp(jidDestino, texto) {
-    try {
-        // FORMATO DA MENSAGEM AJUSTADO PARA O FORMATO MAIS BÁSICO E COMPATÍVEL
-        const payload = {
-            number: jidDestino,
-            text: texto // A API ESTÁ PEDINDO A PROPRIEDADE "text" DIRETAMENTE
-        };
-        await axios.post(`${EVOLUTION_URL}/message/sendText/${INSTANCIA}`, payload, { 
-            headers: { 
-                'apikey': EVOLUTION_API_KEY,
-                'Content-Type': 'application/json'
-            } 
-        });
-    } catch (error) {
-        console.error("Erro CRÍTICO ao enviar resposta via Evolution:", error.message);
-        if (error.response) {
-            console.error("Status da Resposta:", error.response.status);
-            console.error("Dados da Resposta:", JSON.stringify(error.response.data, null, 2));
-        }
-    }
-}
-// ############ FIM DA CORREÇÃO ############
-
-app.post('/webhook', (req, res) => {
-    const data = req.body;
-    if (data.event === 'messages.upsert' && !data.data?.key?.fromMe) {
-        processarMensagem(data.data).catch(err => console.error("Erro não capturado no webhook:", err));
-    }
-    res.sendStatus(200); 
-});
-
-app.get('/', (req, res) => {
-    res.send('Bot de pagamentos (v4 - final) está online!');
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`🚀 Servidor rodando na porta ${PORT}.`);
-});
+            max_tokens: 100
