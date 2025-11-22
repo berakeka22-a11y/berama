@@ -15,15 +15,14 @@ const ADMIN_NUMBER = process.env.ADMIN_NUMBER;
 
 const ARQUIVO_LISTA = './lista.json';
 
-// Validação para garantir que as variáveis foram carregadas
 if (!OPENAI_API_KEY || !EVOLUTION_API_KEY || !EVOLUTION_URL || !INSTANCIA || !ADMIN_NUMBER) {
-    console.error("ERRO CRÍTICO: Uma ou mais variáveis de ambiente não foram definidas. Verifique a aba 'Environment' no Easypanel.");
-    process.exit(1); // Desliga o bot se as chaves não existirem
+    console.error("ERRO CRÍTICO: Uma ou mais variáveis de ambiente não foram definidas.");
+    process.exit(1);
 }
 
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-// --- O RESTANTE DO CÓDIGO PERMANECE EXATAMENTE O MESMO ---
+// --- FUNÇÕES PRINCIPAIS ---
 
 function normalizarNome(nome) {
     if (!nome) return '';
@@ -33,13 +32,11 @@ function normalizarNome(nome) {
 async function formatarEEnviarLista(jidDestino, titulo) {
     try {
         const listaDaMemoria = JSON.parse(fs.readFileSync(ARQUIVO_LISTA, 'utf8'));
-        
         let mensagemLista = `📊 *${titulo}* 📊\n\n`;
         listaDaMemoria.forEach((pessoa, index) => {
             const statusIcon = pessoa.status === 'PAGO' ? '✅' : '⏳';
             mensagemLista += `${index + 1}. ${pessoa.nome} ${statusIcon}\n`;
         });
-
         mensagemLista += "\n---\n💳 *Forma de Pagamento*\nChave PIX: sagradoresenha@gmail.com\nReferência: Mauricio Carvalho";
         await enviarRespostaWhatsApp(jidDestino, mensagemLista);
     } catch (error) {
@@ -49,26 +46,17 @@ async function formatarEEnviarLista(jidDestino, titulo) {
 
 async function processarComando(comando, remetente, jidDestino) {
     const numeroRemetente = remetente.split('@')[0];
-
     if (comando.toLowerCase() === '!resetar') {
-        if (numeroRemetente !== ADMIN_NUMBER) {
-            console.log(`Tentativa de uso do comando !resetar por não-admin: ${numeroRemetente}`);
-            return;
-        }
-
+        if (numeroRemetente !== ADMIN_NUMBER) return;
         console.log("Comando !resetar recebido pelo admin. Resetando a lista...");
         let listaAtual = JSON.parse(fs.readFileSync(ARQUIVO_LISTA, 'utf8'));
-        
-        listaAtual.forEach(pessoa => {
-            pessoa.status = 'PENDENTE';
-        });
-
+        listaAtual.forEach(pessoa => { pessoa.status = 'PENDENTE'; });
         fs.writeFileSync(ARQUIVO_LISTA, JSON.stringify(listaAtual, null, 2));
-
         await formatarEEnviarLista(jidDestino, "Lista de Pagamentos Resetada para o Novo Mês");
     }
 }
 
+// ############ A CORREÇÃO ESTÁ AQUI ############
 async function processarMensagem(data) {
     try {
         const remoteJid = data.key.remoteJid; 
@@ -83,11 +71,22 @@ async function processarMensagem(data) {
 
         if (tipo !== 'imageMessage') return;
 
-        const base64Image = data.message?.imageMessage?.jpegThumbnail || data.base64;
+        // LÓGICA DE DOWNLOAD DA IMAGEM EM ALTA QUALIDADE
+        const mediaKey = data.message.imageMessage.mediaKey;
+        const directPath = data.message.imageMessage.directPath;
+        const urlDownload = `${EVOLUTION_URL}/chat/getBase64FromMedia/${INSTANCIA}`;
+        
+        console.log("Baixando imagem em alta qualidade...");
+        const downloadResponse = await axios.post(urlDownload, { directPath, mediaKey }, {
+            headers: { 'apikey': EVOLUTION_API_KEY }
+        });
+
+        const base64Image = downloadResponse.data.base64;
         if (!base64Image) {
-            console.log("Imagem recebida, mas sem dados em base64. Verifique a configuração 'Webhook Base64' na Evolution API.");
+            console.log("Falha ao baixar a imagem em alta qualidade.");
             return;
         }
+        console.log("Imagem baixada com sucesso.");
 
         let listaAtual = JSON.parse(fs.readFileSync(ARQUIVO_LISTA, 'utf8'));
         const nomesPendentes = listaAtual.filter(c => c.status !== 'PAGO').map(c => c.nome).join(", ");
@@ -113,7 +112,6 @@ async function processarMensagem(data) {
                 listaAtual[index].status = "PAGO";
                 fs.writeFileSync(ARQUIVO_LISTA, JSON.stringify(listaAtual, null, 2));
                 console.log(`MEMÓRIA ATUALIZADA: ${listaAtual[index].nome} agora está PAGO.`);
-                
                 await formatarEEnviarLista(remoteJid, "Lista de Mensalistas Atualizada");
             }
         }
@@ -124,23 +122,17 @@ async function processarMensagem(data) {
         }
     }
 }
+// ############ FIM DA CORREÇÃO ############
 
 async function enviarRespostaWhatsApp(jidDestino, texto) {
     try {
-        const payload = {
-            number: jidDestino,
-            text: texto
-        };
+        const payload = { number: jidDestino, text: texto };
         await axios.post(`${EVOLUTION_URL}/message/sendText/${INSTANCIA}`, payload, { 
-            headers: { 
-                'apikey': EVOLUTION_API_KEY,
-                'Content-Type': 'application/json'
-            } 
+            headers: { 'apikey': EVOLUTION_API_KEY, 'Content-Type': 'application/json' } 
         });
     } catch (error) {
         console.error("Erro CRÍTICO ao enviar resposta via Evolution:", error.message);
         if (error.response) {
-            console.error("Status da Resposta:", error.response.status);
             console.error("Dados da Resposta:", JSON.stringify(error.response.data, null, 2));
         }
     }
@@ -155,7 +147,7 @@ app.post('/webhook', (req, res) => {
 });
 
 app.get('/', (req, res) => {
-    res.send('Bot de pagamentos (v7 - Variáveis de Ambiente) está online!');
+    res.send('Bot de pagamentos (v8 - Final) está online!');
 });
 
 const PORT = process.env.PORT || 3000;
