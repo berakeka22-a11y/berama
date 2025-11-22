@@ -2,20 +2,23 @@
 // BOT PAGAMENTOS - EVOLUTION API
 // ===============================
 
-import express from "express";
-import axios from "axios";
-import fs from "fs";
-import path from "path";
+const express = require("express");
+const axios = require("axios");
+const fs = require("fs");
+const path = require("path");
 
 const app = express();
 app.use(express.json());
 
-const EVOLUTION_API_KEY = "SUA_API_KEY_AQUI";        // troque
-const EVOLUTION_INSTANCE = "bera";                   // seu número
+// -------------------------------
+// CONFIG
+// -------------------------------
+const EVOLUTION_API_KEY = "SUA_API_KEY_AQUI";
+const EVOLUTION_INSTANCE = "bera";
 const API_URL = `https://api.evolution-api.com/whatsapp/${EVOLUTION_INSTANCE}`;
 
 // ===============================
-// 1. Função para baixar mídia
+// FUNÇÃO BAIXAR MÍDIA
 // ===============================
 async function baixarMidia(mediaUrl, filename) {
   try {
@@ -36,7 +39,7 @@ async function baixarMidia(mediaUrl, filename) {
 }
 
 // ===============================
-// 2. Enviar mensagem pelo WhatsApp
+// ENVIAR TEXTO
 // ===============================
 async function enviarMensagem(numero, texto) {
   try {
@@ -49,73 +52,67 @@ async function enviarMensagem(numero, texto) {
       { headers: { apikey: EVOLUTION_API_KEY } }
     );
   } catch (e) {
-    console.log("ERRO AO ENVIAR MENSAGEM:", e.response?.data || e.message);
+    console.log("ERRO AO ENVIAR:", e.response?.data || e.message);
   }
 }
 
 // ===============================
-// 3. Webhook principal
+// WEBHOOK
 // ===============================
 app.post("/api/webhook", async (req, res) => {
   res.sendStatus(200);
-  const data = req.body;
 
-  if (!data || !data.messages || data.messages.length === 0) return;
+  const data = req.body;
+  if (!data?.messages?.length) return;
 
   const msg = data.messages[0];
   const from = msg.from;
 
-  // -------------------------------
-  // SE FOR TEXTO COMANDO
-  // -------------------------------
+  // TEXTO
   if (msg.type === "text") {
-    const texto = msg.textMessage.text.toLowerCase();
+    const t = msg.textMessage.text.toLowerCase();
 
-    if (texto.includes("lista")) {
-      enviarMensagem(from, "Aqui está a lista atualizada ✔️");
+    if (t.includes("lista")) {
+      enviarMensagem(from, "📌 Lista atualizada enviada!");
       return;
     }
 
-    if (texto.includes("pix") || texto.includes("pagar")) {
-      enviarMensagem(from, "Envie o comprovante do PIX de R$ 75 para validar.");
+    if (t.includes("pix") || t.includes("pagar")) {
+      enviarMensagem(from, "Envie o comprovante do PIX de R$ 75.");
       return;
     }
 
     return;
   }
 
-  // -------------------------------
-  // SE FOR MÍDIA (FOTO / PDF / ETC)
-  // -------------------------------
-  if (msg.type === "image" || msg.type === "document" || msg.type === "video") {
+  // MÍDIA
+  if (["image", "document", "video"].includes(msg.type)) {
     try {
-      const mediaUrl = msg[`${msg.type}Message`].directPath;
+      const url = msg[`${msg.type}Message`].directPath;
 
       const filename = `${Date.now()}-${msg.type}.bin`;
-      const filePath = await baixarMidia(mediaUrl, filename);
+      const filePath = await baixarMidia(url, filename);
 
       if (!filePath) {
-        enviarMensagem(from, "❌ Erro ao baixar o arquivo. Tente novamente.");
+        enviarMensagem(from, "❌ Erro ao baixar arquivo.");
         return;
       }
 
-      // FAKE PROCESSAMENTO
-      await enviarMensagem(from, "📥 Comprovante recebido! Validando pagamento...");
+      await enviarMensagem(from, "📥 Comprovante recebido! Validando...");
 
-      setTimeout(async () => {
-        await enviarMensagem(from, "✅ Pagamento confirmado! Já atualizei seu nome na lista.");
-      }, 1500);
+      setTimeout(() => {
+        enviarMensagem(from, "✅ Pagamento confirmado! Nome adicionado na lista.");
+      }, 2000);
 
     } catch (e) {
-      enviarMensagem(from, "❌ Ocorreu um erro ao processar sua imagem.");
       console.log("ERRO PROCESSAR MÍDIA:", e);
+      enviarMensagem(from, "❌ Ocorreu um erro ao processar sua imagem.");
     }
-    return;
   }
 });
 
 // ===============================
-// 4. Servidor
+// SERVIDOR
 // ===============================
 app.listen(3000, () => {
   console.log("Bot rodando na porta 3000");
