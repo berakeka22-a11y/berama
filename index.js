@@ -1,81 +1,74 @@
-import express from "express";
-import fs from "fs";
-import axios from "axios";
-import path from "path";
-import bodyParser from "body-parser";
+const express = require("express");
+const fs = require("fs");
+const axios = require("axios");
+const path = require("path");
+const bodyParser = require("body-parser");
 
 const app = express();
 app.use(bodyParser.json({ limit: "50mb" }));
 
 const PORT = 80;
 
-// Criar pasta de comprovantes se não existir
+// Criar pasta comprovantes
 const pasta = path.join(process.cwd(), "comprovantes");
 if (!fs.existsSync(pasta)) fs.mkdirSync(pasta);
 
-// Webhook do UltraMSG
 app.post("/webhook", async (req, res) => {
-    console.log("\n===== RECEBIDO DO ULTRAMSG =====");
+    console.log("\n===== WEBHOOK RECEBIDO =====");
     console.log(JSON.stringify(req.body, null, 2));
 
     const data = req.body;
 
-    // 1) Mensagem de texto
+    // 1) TEXTO NORMAL
     if (data.type === "chat") {
-        const texto = data.body;
         const numero = data.from;
+        const texto = data.body;
 
-        console.log(`Mensagem de TEXTO recebida de ${numero}: ${texto}`);
-
-        await enviarMensagem(numero, "Recebi sua mensagem! Envie o comprovante para validar.");
+        await enviarMensagem(numero, "Recebi sua mensagem! Envie o comprovante.");
         return res.sendStatus(200);
     }
 
-    // 2) Mensagem de imagem (COMPROVANTE)
+    // 2) IMAGEM / COMPROVANTE
     if (data.type === "imageMessage") {
+        const numero = data.from;
+        const urlImagem = data.image;
+
+        if (!urlImagem) {
+            await enviarMensagem(numero, "Erro: imagem veio sem URL.");
+            return res.sendStatus(200);
+        }
+
+        const nomeArquivo = `${Date.now()}_${numero.replace(/\D/g, "")}.jpg`;
+        const caminho = path.join(pasta, nomeArquivo);
+
         try {
-            const numero = data.from;
-            const urlImagem = data.image;
-
-            console.log("📸 Recebido comprovante:", urlImagem);
-
-            if (!urlImagem) {
-                console.log("ERRO: webhook mandou imagem sem URL");
-                await enviarMensagem(numero, "Erro ao receber a imagem.");
-                return res.sendStatus(200);
-            }
-
-            // Baixar a imagem
-            const nomeArquivo = `${Date.now()}_${numero.replace(/\D/g, "")}.jpg`;
-            const caminhoSalvar = path.join(pasta, nomeArquivo);
-
             const response = await axios({
                 url: urlImagem,
                 method: "GET",
-                responseType: "stream",
+                responseType: "stream"
             });
 
-            const writer = fs.createWriteStream(caminhoSalvar);
+            const writer = fs.createWriteStream(caminho);
             response.data.pipe(writer);
 
             writer.on("finish", async () => {
                 console.log("✔️ Comprovante salvo:", nomeArquivo);
-                await enviarMensagem(numero, "Comprovante recebido e salvo com sucesso!");
+                await enviarMensagem(numero, "Comprovante recebido e salvo!");
             });
 
-            writer.on("error", (err) => console.log("Erro ao salvar arquivo:", err));
+            writer.on("error", (err) => console.log("Erro ao salvar imagem:", err));
 
         } catch (err) {
-            console.error("ERRO ao processar imagem:", err);
+            console.log("Erro baixando imagem:", err);
         }
 
         return res.sendStatus(200);
     }
 
-    res.sendStatus(200);
+    return res.sendStatus(200);
 });
 
-// Função para enviar mensagem
+// Função enviar mensagem
 async function enviarMensagem(to, body) {
     try {
         await axios.post(
@@ -83,16 +76,16 @@ async function enviarMensagem(to, body) {
             new URLSearchParams({
                 token: "idyxynn5iaugvpj4",
                 to,
-                body,
+                body
             })
         );
-        console.log("✔️ Resposta enviada para", to);
+
+        console.log("Resposta enviada para", to);
     } catch (err) {
-        console.error("Erro ao enviar mensagem:", err.response?.data || err);
+        console.log("Erro ao enviar mensagem:", err?.response?.data || err);
     }
 }
 
-// Iniciar servidor
 app.listen(PORT, () => {
     console.log("🔥 Servidor rodando na porta", PORT);
 });
