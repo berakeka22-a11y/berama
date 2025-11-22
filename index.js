@@ -1,93 +1,200 @@
-import express from "express";
-import axios from "axios";
+const express = require('express');
+const fs = require('fs');
+const axios = require('axios');
+const OpenAI = require('openai');
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 
-// CONFIG ULTRAMSG
-const INSTANCE = "instance151755";
-const TOKEN = "idyxynn5iaugvpj4";
+// -----------------------------------------------------------------------------
+// CONFIGURAÇÕES
+// -----------------------------------------------------------------------------
 
-// LISTA DE PAGAMENTOS
-let pagamentos = [];
+// Credenciais fixas da UltraMsg para contornar o bug do Easypanel
+const ULTRAMSG_INSTANCE = "instance151755";
+const ULTRAMSG_TOKEN = "idyxynn5iaugvpj4";
 
-// WEBHOOK
-app.post("/webhook", async (req, res) => {
-    const data = req.body;
+// Credenciais seguras do ambiente
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const ADMIN_NUMBER = process.env.ADMIN_NUMBER;
 
-    // UltraMsg envia assim:
-    const mensagem = data?.data?.body;
-    const numero = data?.data?.from;
+// Arquivo da lista
+const ARQUIVO_LISTA = "./lista.json";
 
-    if (!mensagem || !numero) {
-        return res.sendStatus(200);
-    }
+// -----------------------------------------------------------------------------
+// INICIALIZAÇÃO DAS APIS
+// -----------------------------------------------------------------------------
 
-    const texto = mensagem.toLowerCase().trim();
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-    // 👉 COMANDO: lista
-    if (texto === "lista") {
-        const resposta =
-            pagamentos.length === 0
-                ? "Nenhum pagamento registrado ainda."
-                : "Pagamentos registrados:\n\n" +
-                  pagamentos.map((p, i) => `${i + 1}. ${p}`).join("\n");
-
-        await enviarMensagem(numero, resposta);
-        return res.sendStatus(200);
-    }
-
-    // 👉 COMANDO: paguei NOME
-    if (texto.startsWith("paguei")) {
-        const nome = texto.replace("paguei", "").trim();
-
-        if (!nome) {
-            await enviarMensagem(numero, "Use assim:\n\npaguei João");
-            return res.sendStatus(200);
-        }
-
-        pagamentos.push(nome);
-
-        await enviarMensagem(
-            numero,
-            `Pagamento registrado com sucesso 🟢\n\nNome: *${nome}*`
-        );
-
-        return res.sendStatus(200);
-    }
-
-    // 👉 RESPOSTA PADRÃO
-    const comandos = `Bem-vindo! Aqui estão os comandos:
-
-• lista  
-Mostra todos os pagamentos.
-
-• paguei NOME  
-Registra um pagamento.
-
-Exemplo:  
-paguei Carlos`;
-
-    await enviarMensagem(numero, comandos);
-    res.sendStatus(200);
+const ultramsgAPI = axios.create({
+    baseURL: `https://api.ultramsg.com/${ULTRAMSG_INSTANCE}`,
+    params: { token: ULTRAMSG_TOKEN }
 });
 
-// FUNÇÃO DE ENVIO ULTRAMSG
-async function enviarMensagem(to, body) {
+// -----------------------------------------------------------------------------
+// FUNÇÕES DO BOT
+// -----------------------------------------------------------------------------
+
+function normalizarNome(nome) {
+    if (!nome) return '';
+    return nome.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+async function enviarRespostaWhatsApp(destino, corpo) {
     try {
-        await axios.post(
-            `https://api.ultramsg.com/${INSTANCE}/messages/chat`,
-            {
-                token: TOKEN,
-                to,
-                body
-            }
-        );
-    } catch (error) {
-        console.error("Erro ao enviar mensagem:", error.response?.data || error);
+        console.log("→ Enviando resposta para", destino);
+        await ultramsgAPI.post('/messages/chat', { to: destino, body: corpo });
+        console.log("✔ Mensagem enviada");
+    } catch (e) {
+        console.log("Erro ao enviar:", e.response ? e.response.data : e.message);
     }
 }
 
-app.listen(3000, () =>
-    console.log("🔥 BOT DE PAGAMENTOS ULTRAMSG RODANDO NA PORTA 3000 🔥")
-);
+async function formatarEEnviarLista(destino, titulo) {
+    try {
+        const lista = JSON.parse(fs.readFileSync(ARQUIVO_LISTA, 'utf8'));
+
+        let txt = `📊 *${titulo}* 📊\n\n`;
+        lista.forEach((p, idx) => {
+            const icone = p.status === "PAGO" ? "✅" : "⏳";
+            txt += `${idx + 1}. ${p.nome} ${icone}\n`;
+        });
+
+        txt += "\n💳 Chave PIX: sagradoresenha@gmail.com\nReferência: Mauricio Carvalho";
+
+        await enviarRespostaWhatsApp(destino, txt);
+    } catch (e) {
+        console.log("Erro formatar lista:", e.message);
+    }
+}
+
+async function processarComando(body, remetente, destino) {
+    if (body.toLowerCase() === "!resetar") {
+        if (remetente !== `${ADMIN_NUMBER}@c.us`) {
+            console.log("→ Tentativa de reset por não admin:", remetente);
+            return;
+        }
+
+        let lista = JSON.parse(fs.readFileSync(ARQUIVO_LISTA, 'utf8'));
+        lista.forEach(x => x.status = "PENDENTE");
+        fs.writeFileSync(ARQUIVO_LISTA, JSON.stringify(lista, null, 2));
+
+        await formatarEEnviarLista(destino, "Lista Resetada");
+    }
+}
+
+async function processarMensagem(data) {
+    try {
+        const { type, from, body, media } = data;
+        const destino = from;
+
+        if (type === "chat") {
+            return await processarComando(body, from, destino);
+        }
+
+        if (type !== "image") return;
+
+        console.log("📸 Imagem recebida");
+
+        // download da imagem
+        const down = await axios.get(media, { responseType: 'arraybuffer' });
+        const base64Image = Buffer.from(down.data).toString('base64');
+
+        // carregar lista
+        let lista = JSON.parse(fs.readFileSync(ARQUIVO_LISTA, 'utf8'));
+        const pendentes = lista.filter(x => x.status !== "PAGO").map(x => x.nome);
+
+        if (pendentes.length === 0) {
+            console.log("Todos pagos");
+            return;
+        }
+
+        // Enviar imagem para OpenAI
+        const ia = await openai.chat.completions.create({
+            model: "gpt-4o",
+            max_tokens: 100,
+            temperature: 0,
+            messages: [
+                {
+                    role: "system",
+                    content:
+                        `Analise o comprovante. Valor deve ser 75.00 e o nome um destes: [${pendentes.join(", ")}].
+                        Responda APENAS JSON assim:
+                        {"aprovado":true/false,"nomeEncontrado":"string ou null"}`
+                },
+                {
+                    role: "user",
+                    content: [
+                        {
+                            type: "image_url",
+                            image_url: { url: `data:image/jpeg;base64,${base64Image}` }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        const resultado = JSON.parse(
+            ia.choices[0].message.content.replace(/```json|```/g, "").trim()
+        );
+
+        console.log("🔍 Análise:", resultado);
+
+        if (resultado.aprovado && resultado.nomeEncontrado) {
+            const nomeIA = normalizarNome(resultado.nomeEncontrado);
+            const achou = lista.findIndex(
+                x => normalizarNome(x.nome) === nomeIA
+            );
+
+            if (achou !== -1) {
+                lista[achou].status = "PAGO";
+                fs.writeFileSync(ARQUIVO_LISTA, JSON.stringify(lista, null, 2));
+                await formatarEEnviarLista(destino, "Lista Atualizada");
+            }
+        }
+
+    } catch (e) {
+        console.log("ERRO processarMensagem:", e.message);
+    }
+}
+
+// -----------------------------------------------------------------------------
+// WEBHOOK
+// -----------------------------------------------------------------------------
+
+app.post("/webhook", (req, res) => {
+    if (!OPENAI_API_KEY || !ADMIN_NUMBER) {
+        console.log("❌ Falta variável de ambiente");
+        return res.sendStatus(500);
+    }
+
+    try {
+        const data = req.body.data;
+
+        if (data && !data.fromMe) {
+            console.log("📥 Webhook recebido");
+            processarMensagem(data);
+        }
+
+        res.sendStatus(200);
+    } catch (e) {
+        console.log("Erro webhook:", e.message);
+        res.sendStatus(500);
+    }
+});
+
+// -----------------------------------------------------------------------------
+// STATUS
+// -----------------------------------------------------------------------------
+
+app.get("/", (req, res) => {
+    res.send("Bot pagamentos UltraMsg Online v1.0");
+});
+
+// -----------------------------------------------------------------------------
+// INICIAR SERVIDOR
+// -----------------------------------------------------------------------------
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log("🚀 Rodando porta", PORT));
