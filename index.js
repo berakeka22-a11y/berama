@@ -56,7 +56,7 @@ async function processarComando(comando, remetente, jidDestino) {
     }
 }
 
-// ############ CÓDIGO FINAL E SIMPLIFICADO (v14) ############
+// ############ CÓDIGO FINAL E DEFINITIVO (v15) ############
 async function processarMensagem(data) {
     try {
         const remoteJid = data.key.remoteJid; 
@@ -71,14 +71,28 @@ async function processarMensagem(data) {
 
         if (tipo !== 'imageMessage') return;
 
-        // MÉTODO SIMPLES E DIRETO: USAR A MINIATURA QUE JÁ VEM NA MENSAGEM
-        const base64Image = data.message?.imageMessage?.jpegThumbnail;
+        // MÉTODO DE DOWNLOAD CORRIGIDO PARA A LÓGICA "ESTRANHA" DA EVOLUTION API
+        console.log("Iniciando download da imagem original (método GET com corpo)...");
+        
+        const urlDownload = `${EVOLUTION_URL}/chat/downloadMedia`;
+        
+        // A Evolution API, em algumas versões, espera um GET mas com o payload no corpo, o que é incomum.
+        // O Axios permite isso usando a propriedade 'data'.
+        const downloadResponse = await axios({
+            method: 'GET',
+            url: urlDownload,
+            data: data.message, // <<<<<< A CORREÇÃO CRÍTICA ESTÁ AQUI
+            headers: { 'apikey': EVOLUTION_API_KEY },
+            responseType: 'arraybuffer'
+        });
+
+        const base64Image = Buffer.from(downloadResponse.data).toString('base64');
         
         if (!base64Image) {
-            console.log("Miniatura (jpegThumbnail) não encontrada na mensagem. Ignorando.");
+            console.log("Falha ao converter a imagem baixada para base64.");
             return;
         }
-        console.log("Miniatura encontrada. Enviando para análise...");
+        console.log("Imagem original baixada e convertida para base64 com sucesso.");
 
         let listaAtual = JSON.parse(fs.readFileSync(ARQUIVO_LISTA, 'utf8'));
         const nomesPendentes = listaAtual.filter(c => c.status !== 'PAGO').map(c => c.nome).join(", ");
@@ -110,39 +124,8 @@ async function processarMensagem(data) {
     } catch (error) {
         console.error("Erro no processarMensagem:", error.message);
         if (error.response) {
-            console.error("Detalhes do erro da API:", JSON.stringify(error.response.data, null, 2));
+            console.error("Detalhes do erro da API:", error.response.data);
         }
     }
 }
-// ############ FIM DO CÓDIGO FINAL ############
-
-async function enviarRespostaWhatsApp(jidDestino, texto) {
-    try {
-        const payload = { number: jidDestino, text: texto };
-        await axios.post(`${EVOLUTION_URL}/message/sendText/${INSTANCIA}`, payload, { 
-            headers: { 'apikey': EVOLUTION_API_KEY, 'Content-Type': 'application/json' } 
-        });
-    } catch (error) {
-        console.error("Erro CRÍTICO ao enviar resposta via Evolution:", error.message);
-        if (error.response) {
-            console.error("Dados da Resposta:", JSON.stringify(error.response.data, null, 2));
-        }
-    }
-}
-
-app.post('/webhook', (req, res) => {
-    const data = req.body;
-    if (data.event === 'messages.upsert' && !data.data?.key?.fromMe) {
-        processarMensagem(data.data).catch(err => console.error("Erro não capturado no webhook:", err));
-    }
-    res.sendStatus(200); 
-});
-
-app.get('/', (req, res) => {
-    res.send('Bot de pagamentos (v14 - Simples e Estável) está online!');
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`🚀 Servidor rodando na porta ${PORT}.`);
-});
+// #
