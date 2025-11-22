@@ -56,7 +56,7 @@ async function processarComando(comando, remetente, jidDestino) {
     }
 }
 
-// ############ CÓDIGO FINAL E SIMPLIFICADO ############
+// ############ CÓDIGO FINAL BASEADO NA DOCUMENTAÇÃO ############
 async function processarMensagem(data) {
     try {
         const remoteJid = data.key.remoteJid; 
@@ -71,14 +71,29 @@ async function processarMensagem(data) {
 
         if (tipo !== 'imageMessage') return;
 
-        // MÉTODO SIMPLES E DIRETO: USAR A MINIATURA QUE JÁ VEM NA MENSAGEM
-        const base64Image = data.message?.imageMessage?.jpegThumbnail;
+        // MÉTODO CORRETO CONFORME DOCUMENTAÇÃO DA EVOLUTION API
+        console.log("Iniciando download da imagem original (método GET)...");
+        
+        // A documentação especifica que os dados da mensagem devem ser passados como query params
+        const urlDownload = `${EVOLUTION_URL}/chat/downloadMedia`;
+        
+        const downloadResponse = await axios({
+            method: 'GET', // USANDO O MÉTODO CORRETO
+            url: urlDownload,
+            params: {
+                message: data.message // Passando o objeto da mensagem como parâmetro
+            },
+            headers: { 'apikey': EVOLUTION_API_KEY },
+            responseType: 'arraybuffer'
+        });
+
+        const base64Image = Buffer.from(downloadResponse.data).toString('base64');
         
         if (!base64Image) {
-            console.log("Miniatura (jpegThumbnail) não encontrada na mensagem. Ignorando.");
+            console.log("Falha ao converter a imagem baixada para base64.");
             return;
         }
-        console.log("Miniatura encontrada. Enviando para análise...");
+        console.log("Imagem original baixada e convertida para base64 com sucesso.");
 
         let listaAtual = JSON.parse(fs.readFileSync(ARQUIVO_LISTA, 'utf8'));
         const nomesPendentes = listaAtual.filter(c => c.status !== 'PAGO').map(c => c.nome).join(", ");
@@ -110,7 +125,7 @@ async function processarMensagem(data) {
     } catch (error) {
         console.error("Erro no processarMensagem:", error.message);
         if (error.response) {
-            console.error("Detalhes do erro da API:", JSON.stringify(error.response.data, null, 2));
+            console.error("Detalhes do erro da API:", error.response.data);
         }
     }
 }
@@ -133,3 +148,16 @@ async function enviarRespostaWhatsApp(jidDestino, texto) {
 app.post('/webhook', (req, res) => {
     const data = req.body;
     if (data.event === 'messages.upsert' && !data.data?.key?.fromMe) {
+        processarMensagem(data.data).catch(err => console.error("Erro não capturado no webhook:", err));
+    }
+    res.sendStatus(200); 
+});
+
+app.get('/', (req, res) => {
+    res.send('Bot de pagamentos (v12 - Documentação Oficial) está online!');
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`🚀 Servidor rodando na porta ${PORT}.`);
+});
