@@ -2,11 +2,13 @@ const express = require('express');
 const fs = require('fs');
 const OpenAI = require('openai');
 const axios = require('axios');
+const crypto = require('crypto');
+const { fromBuffer } = require('file-type');
 
 const app = express();
 app.use(express.json({ limit: '50mb' }));
 
-// --- CONFIGURAÇÕES BUSCADAS DO AMBIENTE ---
+// --- CONFIGURAÇÕES DO AMBIENTE ---
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY; 
 const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY; 
 const EVOLUTION_URL = process.env.EVOLUTION_URL;
@@ -16,13 +18,13 @@ const ADMIN_NUMBER = process.env.ADMIN_NUMBER;
 const ARQUIVO_LISTA = './lista.json';
 
 if (!OPENAI_API_KEY || !EVOLUTION_API_KEY || !EVOLUTION_URL || !INSTANCIA || !ADMIN_NUMBER) {
-    console.error("ERRO CRÍTICO: Uma ou mais variáveis de ambiente não foram definidas.");
+    console.error("ERRO CRÍTICO: Variáveis de ambiente faltando.");
     process.exit(1);
 }
 
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-// --- FUNÇÕES PRINCIPAIS ---
+// --- FUNÇÕES AUXILIARES ---
 
 function normalizarNome(nome) {
     if (!nome) return '';
@@ -40,7 +42,7 @@ async function formatarEEnviarLista(jidDestino, titulo) {
         mensagemLista += "\n---\n💳 *Forma de Pagamento*\nChave PIX: sagradoresenha@gmail.com\nReferência: Mauricio Carvalho";
         await enviarRespostaWhatsApp(jidDestino, mensagemLista);
     } catch (error) {
-        console.error("Erro ao formatar ou enviar lista:", error.message);
+        console.error("Erro ao formatar/enviar lista:", error.message);
     }
 }
 
@@ -48,15 +50,32 @@ async function processarComando(comando, remetente, jidDestino) {
     const numeroRemetente = remetente.split('@')[0];
     if (comando.toLowerCase() === '!resetar') {
         if (numeroRemetente !== ADMIN_NUMBER) return;
-        console.log("Comando !resetar recebido pelo admin. Resetando a lista...");
+        console.log("Comando !resetar recebido. Resetando a lista...");
         let listaAtual = JSON.parse(fs.readFileSync(ARQUIVO_LISTA, 'utf8'));
         listaAtual.forEach(pessoa => { pessoa.status = 'PENDENTE'; });
         fs.writeFileSync(ARQUIVO_LISTA, JSON.stringify(listaAtual, null, 2));
-        await formatarEEnviarLista(jidDestino, "Lista de Pagamentos Resetada para o Novo Mês");
+        await formatarEEnviarLista(jidDestino, "Lista de Pagamentos Resetada");
     }
 }
 
-// ############ CÓDIGO FINAL E CORRIGIDO (v16) ############
+// ############ CÓDIGO FINAL E DEFINITIVO (v17) - FEITO PARA O PAYLOAD COMPLEXO ############
+async function decryptMedia(mediaKey, directPath) {
+    console.log("Iniciando descriptografia da mídia...");
+    const mediaKeyExpanded = crypto.hkdfSync('sha256', Buffer.from(mediaKey, 'base64'), 32, 'WhatsApp Image Keys', Buffer.alloc(0));
+    
+    const downloadResponse = await axios.get(directPath, { responseType: 'arraybuffer' });
+    const encryptedMedia = downloadResponse.data;
+
+    const iv = encryptedMedia.slice(0, 16);
+    const ciphertext = encryptedMedia.slice(16, -10);
+    
+    const decipher = crypto.createDecipheriv('aes-256-cbc', mediaKeyExpanded, iv);
+    const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    
+    console.log("Mídia descriptografada com sucesso.");
+    return decrypted;
+}
+
 async function processarMensagem(data) {
     try {
         const remoteJid = data.key.remoteJid; 
@@ -71,26 +90,20 @@ async function processarMensagem(data) {
 
         if (tipo !== 'imageMessage') return;
 
-        // MÉTODO DE DOWNLOAD CORRIGIDO PARA A LÓGICA "ESTRANHA" DA EVOLUTION API
-        console.log("Iniciando download da imagem original (método GET com corpo)...");
-        
-        const urlDownload = `${EVOLUTION_URL}/chat/downloadMedia`;
-        
-        const downloadResponse = await axios({
-            method: 'GET',
-            url: urlDownload,
-            data: data.message,
-            headers: { 'apikey': EVOLUTION_API_KEY },
-            responseType: 'arraybuffer'
-        });
-
-        const base64Image = Buffer.from(downloadResponse.data).toString('base64');
-        
-        if (!base64Image) {
-            console.log("Falha ao converter a imagem baixada para base64.");
+        const { mediaKey, directPath } = data.message.imageMessage;
+        if (!mediaKey || !directPath) {
+            console.log("Webhook não contém mediaKey ou directPath. Verifique se 'Webhook Base64' está DESATIVADO.");
             return;
         }
-        console.log("Imagem original baixada e convertida para base64 com sucesso.");
+
+        const decryptedImageBuffer = await decryptMedia(mediaKey, directPath);
+        const base64Image = decryptedImageBuffer.toString('base64');
+        
+        if (!base64Image) {
+            console.log("Falha ao converter a imagem descriptografada para base64.");
+            return;
+        }
+        console.log("Imagem original obtida e convertida para base64.");
 
         let listaAtual = JSON.parse(fs.readFileSync(ARQUIVO_LISTA, 'utf8'));
         const nomesPendentes = listaAtual.filter(c => c.status !== 'PAGO').map(c => c.nome).join(", ");
@@ -100,7 +113,7 @@ async function processarMensagem(data) {
             model: "gpt-4o",
             messages: [
                 { role: "system", content: `Analise o comprovante. Valor deve ser 75.00 e o nome um destes: [${nomesPendentes}]. Responda APENAS JSON: {"aprovado": boolean, "nomeEncontrado": "string ou null"}` },
-                { role: "user", content: [{ type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Image}` } }] } // <<<<< VÍRGULA REMOVIDA
+                { role: "user", content: [{ type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Image}` } }] }
             ],
             max_tokens: 100, temperature: 0 
         });
@@ -136,9 +149,6 @@ async function enviarRespostaWhatsApp(jidDestino, texto) {
         });
     } catch (error) {
         console.error("Erro CRÍTICO ao enviar resposta via Evolution:", error.message);
-        if (error.response) {
-            console.error("Dados da Resposta:", JSON.stringify(error.response.data, null, 2));
-        }
     }
 }
 
@@ -151,7 +161,7 @@ app.post('/webhook', (req, res) => {
 });
 
 app.get('/', (req, res) => {
-    res.send('Bot de pagamentos (v16 - Correção de Sintaxe) está online!');
+    res.send('Bot de pagamentos (v17 - Descriptografia) está online!');
 });
 
 const PORT = process.env.PORT || 3000;
