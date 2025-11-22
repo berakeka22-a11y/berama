@@ -1,103 +1,163 @@
-const express = require("express");
-const axios = require("axios");
-const bodyParser = require("body-parser");
+const express = require('express');
+const fs = require('fs');
+const OpenAI = require('openai');
+const axios = require('axios');
 
 const app = express();
-app.use(bodyParser.json());
+app.use(express.json({ limit: '50mb' }));
 
-// =======================
-// 🔥 SUAS APIS
-// =======================
-const EVOLUTION_URL = "https://tutoriaisdigitais-evolution.ksyx1x.easypanel.host/api/v1";
-const INSTANCE = "3333";
-const TOKEN = "iUuDwBt5aVZL2tnKKfzxlXkT3FZ9gcGb";
+// --- CONFIGURAÇÕES BUSCADAS DO AMBIENTE ---
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY; 
+const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY; 
+const EVOLUTION_URL = process.env.EVOLUTION_URL;
+const INSTANCIA = process.env.INSTANCIA; 
+const ADMIN_NUMBER = process.env.ADMIN_NUMBER;
 
-// =======================
-// 📩 WEBHOOK
-// =======================
-app.post("/webhook", async (req, res) => {
-    console.log("📥 Recebido:");
-    console.log(JSON.stringify(req.body, null, 2));
+const ARQUIVO_LISTA = './lista.json';
 
-    const data = req.body;
-    const number = data?.message?.from;
+if (!OPENAI_API_KEY || !EVOLUTION_API_KEY || !EVOLUTION_URL || !INSTANCIA || !ADMIN_NUMBER) {
+    console.error("ERRO CRÍTICO: Uma ou mais variáveis de ambiente não foram definidas.");
+    process.exit(1);
+}
 
-    if (!number) return res.sendStatus(200);
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-    // --- Extrair texto se existir ---
-    let msg = null;
+// --- FUNÇÕES PRINCIPAIS ---
 
-    // Mensagem normal de texto
-    if (data?.message?.text?.body) {
-        msg = data.message.text.body.toLowerCase();
-    }
+function normalizarNome(nome) {
+    if (!nome) return '';
+    return nome.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
 
-    // Mensagem de imagem
-    if (data?.message?.image) {
-        msg = "imagem"; // só pra identificar
-    }
-
-    // Mensagem de áudio
-    if (data?.message?.audio) {
-        msg = "audio";
-    }
-
-    // Caso não tenha nada identificável
-    if (!msg) msg = "outro";
-
-    console.log("Mensagem interpretada:", msg);
-
-    // --- Respostas ---
-    if (msg === "pago") {
-        await enviarMensagem(number, "✔️ Pagamento confirmado!");
-    }
-
-    if (msg === "lista") {
-        await enviarMensagem(number, "📄 Lista:\n- Alex: PAGO\n- João: PENDENTE");
-    }
-
-    if (msg === "imagem") {
-        await enviarMensagem(number, "🖼️ Recebi sua imagem!");
-    }
-
-    if (msg === "audio") {
-        await enviarMensagem(number, "🎤 Recebi seu áudio!");
-    }
-
-    res.sendStatus(200);
-});
-
-// =======================
-// 📤 ENVIAR MENSAGEM
-// =======================
-async function enviarMensagem(numero, texto) {
+async function formatarEEnviarLista(jidDestino, titulo) {
     try {
-        const url = `${EVOLUTION_URL}/${INSTANCE}/send-message`;
-
-        const body = {
-            number: numero,
-            text: texto
-        };
-
-        const headers = {
-            Authorization: `Bearer ${TOKEN}`
-        };
-
-        const r = await axios.post(url, body, { headers });
-
-        console.log("💬 Enviado:", texto);
-        return r.data;
-
-    } catch (err) {
-        console.log("❌ Erro ao enviar:");
-        console.log(err.response?.data || err.message);
+        const listaDaMemoria = JSON.parse(fs.readFileSync(ARQUIVO_LISTA, 'utf8'));
+        let mensagemLista = `📊 *${titulo}* 📊\n\n`;
+        listaDaMemoria.forEach((pessoa, index) => {
+            const statusIcon = pessoa.status === 'PAGO' ? '✅' : '⏳';
+            mensagemLista += `${index + 1}. ${pessoa.nome} ${statusIcon}\n`;
+        });
+        mensagemLista += "\n---\n💳 *Forma de Pagamento*\nChave PIX: sagradoresenha@gmail.com\nReferência: Mauricio Carvalho";
+        await enviarRespostaWhatsApp(jidDestino, mensagemLista);
+    } catch (error) {
+        console.error("Erro ao formatar ou enviar lista:", error.message);
     }
 }
 
-// =======================
-// 🚀 SERVIDOR
-// =======================
+async function processarComando(comando, remetente, jidDestino) {
+    const numeroRemetente = remetente.split('@')[0];
+    if (comando.toLowerCase() === '!resetar') {
+        if (numeroRemetente !== ADMIN_NUMBER) return;
+        console.log("Comando !resetar recebido pelo admin. Resetando a lista...");
+        let listaAtual = JSON.parse(fs.readFileSync(ARQUIVO_LISTA, 'utf8'));
+        listaAtual.forEach(pessoa => { pessoa.status = 'PENDENTE'; });
+        fs.writeFileSync(ARQUIVO_LISTA, JSON.stringify(listaAtual, null, 2));
+        await formatarEEnviarLista(jidDestino, "Lista de Pagamentos Resetada para o Novo Mês");
+    }
+}
+
+// ############ CÓDIGO FINAL BASEADO NA DOCUMENTAÇÃO ############
+async function processarMensagem(data) {
+    try {
+        const remoteJid = data.key.remoteJid; 
+        const tipo = data.messageType;
+        const remetente = data.key.participant || data.key.remoteJid;
+
+        const textoMensagem = data.message?.conversation || data.message?.extendedTextMessage?.text;
+        if (textoMensagem) {
+            await processarComando(textoMensagem, remetente, remoteJid);
+            return;
+        }
+
+        if (tipo !== 'imageMessage') return;
+
+        // MÉTODO CORRETO CONFORME DOCUMENTAÇÃO DA EVOLUTION API
+        console.log("Iniciando download da imagem original (método GET)...");
+        
+        // A documentação especifica que os dados da mensagem devem ser passados como query params
+        const urlDownload = `${EVOLUTION_URL}/chat/downloadMedia`;
+        
+        const downloadResponse = await axios({
+            method: 'GET', // USANDO O MÉTODO CORRETO
+            url: urlDownload,
+            params: {
+                message: data.message // Passando o objeto da mensagem como parâmetro
+            },
+            headers: { 'apikey': EVOLUTION_API_KEY },
+            responseType: 'arraybuffer'
+        });
+
+        const base64Image = Buffer.from(downloadResponse.data).toString('base64');
+        
+        if (!base64Image) {
+            console.log("Falha ao converter a imagem baixada para base64.");
+            return;
+        }
+        console.log("Imagem original baixada e convertida para base64 com sucesso.");
+
+        let listaAtual = JSON.parse(fs.readFileSync(ARQUIVO_LISTA, 'utf8'));
+        const nomesPendentes = listaAtual.filter(c => c.status !== 'PAGO').map(c => c.nome).join(", ");
+        if (!nomesPendentes) return;
+
+        const response = await openai.chat.completions.create({
+            model: "gpt-4o",
+            messages: [
+                { role: "system", content: `Analise o comprovante. Valor deve ser 75.00 e o nome um destes: [${nomesPendentes}]. Responda APENAS JSON: {"aprovado": boolean, "nomeEncontrado": "string ou null"}` },
+                { role: "user", content: [{ type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Image}` } }] },
+            ],
+            max_tokens: 100, temperature: 0 
+        });
+
+        const resultado = JSON.parse(response.choices[0].message.content.replace(/```json|```/g, '').trim());
+        console.log("Análise OpenAI:", resultado);
+
+        if (resultado.aprovado === true && resultado.nomeEncontrado) {
+            const nomeNormalizadoIA = normalizarNome(resultado.nomeEncontrado);
+            const index = listaAtual.findIndex(c => normalizarNome(c.nome) === nomeNormalizadoIA);
+            
+            if (index !== -1 && listaAtual[index].status !== 'PAGO') {
+                listaAtual[index].status = "PAGO";
+                fs.writeFileSync(ARQUIVO_LISTA, JSON.stringify(listaAtual, null, 2));
+                console.log(`MEMÓRIA ATUALIZADA: ${listaAtual[index].nome} agora está PAGO.`);
+                await formatarEEnviarLista(remoteJid, "Lista de Mensalistas Atualizada");
+            }
+        }
+    } catch (error) {
+        console.error("Erro no processarMensagem:", error.message);
+        if (error.response) {
+            console.error("Detalhes do erro da API:", error.response.data);
+        }
+    }
+}
+// ############ FIM DO CÓDIGO FINAL ############
+
+async function enviarRespostaWhatsApp(jidDestino, texto) {
+    try {
+        const payload = { number: jidDestino, text: texto };
+        await axios.post(`${EVOLUTION_URL}/message/sendText/${INSTANCIA}`, payload, { 
+            headers: { 'apikey': EVOLUTION_API_KEY, 'Content-Type': 'application/json' } 
+        });
+    } catch (error) {
+        console.error("Erro CRÍTICO ao enviar resposta via Evolution:", error.message);
+        if (error.response) {
+            console.error("Dados da Resposta:", JSON.stringify(error.response.data, null, 2));
+        }
+    }
+}
+
+app.post('/webhook', (req, res) => {
+    const data = req.body;
+    if (data.event === 'messages.upsert' && !data.data?.key?.fromMe) {
+        processarMensagem(data.data).catch(err => console.error("Erro não capturado no webhook:", err));
+    }
+    res.sendStatus(200); 
+});
+
+app.get('/', (req, res) => {
+    res.send('Bot de pagamentos (v12 - Documentação Oficial) está online!');
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`🚀 Rodando na porta ${PORT}`);
+    console.log(`🚀 Servidor rodando na porta ${PORT}.`);
 });
