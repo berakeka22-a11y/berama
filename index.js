@@ -16,7 +16,7 @@ const ADMIN_NUMBER = '5513991194730';
 
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-// --- O RESTANTE DO CÓDIGO PERMANECE O MESMO ---
+// --- FUNÇÕES PRINCIPAIS ---
 
 function normalizarNome(nome) {
     if (!nome) return '';
@@ -92,4 +92,66 @@ async function processarMensagem(data) {
                 { role: "system", content: `Analise o comprovante. Valor deve ser 75.00 e o nome um destes: [${nomesPendentes}]. Responda APENAS JSON: {"aprovado": boolean, "nomeEncontrado": "string ou null"}` },
                 { role: "user", content: [{ type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Image}` } }] },
             ],
-            max_tokens: 100
+            max_tokens: 100, temperature: 0 
+        });
+
+        const resultado = JSON.parse(response.choices[0].message.content.replace(/```json|```/g, '').trim());
+        console.log("Análise OpenAI:", resultado);
+
+        if (resultado.aprovado === true && resultado.nomeEncontrado) {
+            const nomeNormalizadoIA = normalizarNome(resultado.nomeEncontrado);
+            const index = listaAtual.findIndex(c => normalizarNome(c.nome) === nomeNormalizadoIA);
+            
+            if (index !== -1 && listaAtual[index].status !== 'PAGO') {
+                listaAtual[index].status = "PAGO";
+                fs.writeFileSync(ARQUIVO_LISTA, JSON.stringify(listaAtual, null, 2));
+                console.log(`MEMÓRIA ATUALIZADA: ${listaAtual[index].nome} agora está PAGO.`);
+                
+                await formatarEEnviarLista(remoteJid, "Lista de Mensalistas Atualizada");
+            }
+        }
+    } catch (error) {
+        console.error("Erro no processarMensagem:", error.message);
+        if (error.response) {
+            console.error("Detalhes do erro da API:", error.response.data);
+        }
+    }
+}
+
+async function enviarRespostaWhatsApp(jidDestino, texto) {
+    try {
+        const payload = {
+            number: jidDestino,
+            text: texto
+        };
+        await axios.post(`${EVOLUTION_URL}/message/sendText/${INSTANCIA}`, payload, { 
+            headers: { 
+                'apikey': EVOLUTION_API_KEY,
+                'Content-Type': 'application/json'
+            } 
+        });
+    } catch (error) {
+        console.error("Erro CRÍTICO ao enviar resposta via Evolution:", error.message);
+        if (error.response) {
+            console.error("Status da Resposta:", error.response.status);
+            console.error("Dados da Resposta:", JSON.stringify(error.response.data, null, 2));
+        }
+    }
+}
+
+app.post('/webhook', (req, res) => {
+    const data = req.body;
+    if (data.event === 'messages.upsert' && !data.data?.key?.fromMe) {
+        processarMensagem(data.data).catch(err => console.error("Erro não capturado no webhook:", err));
+    }
+    res.sendStatus(200); 
+});
+
+app.get('/', (req, res) => {
+    res.send('Bot de pagamentos (v6.1 - corrigido) está online!');
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`🚀 Servidor rodando na porta ${PORT}.`);
+});
