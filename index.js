@@ -6,17 +6,24 @@ const axios = require('axios');
 const app = express();
 app.use(express.json({ limit: '50mb' }));
 
-// --- SUAS CREDENCIAIS E CONFIGURAÇÕES ---
-const OPENAI_API_KEY = "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"; 
-const EVOLUTION_API_KEY = "429683C4C977415CAAFCCE10F7D57E11"; 
-const EVOLUTION_URL = "https://tutoriaisdigitais-evolution-api.ksyx1x.easypanel.host";
-const INSTANCIA = "bera"; 
+// --- CONFIGURAÇÕES BUSCADAS DO AMBIENTE ---
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY; 
+const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY; 
+const EVOLUTION_URL = process.env.EVOLUTION_URL;
+const INSTANCIA = process.env.INSTANCIA; 
+const ADMIN_NUMBER = process.env.ADMIN_NUMBER;
+
 const ARQUIVO_LISTA = './lista.json';
-const ADMIN_NUMBER = '5513991194730';
+
+// Validação para garantir que as variáveis foram carregadas
+if (!OPENAI_API_KEY || !EVOLUTION_API_KEY || !EVOLUTION_URL || !INSTANCIA || !ADMIN_NUMBER) {
+    console.error("ERRO CRÍTICO: Uma ou mais variáveis de ambiente não foram definidas. Verifique a aba 'Environment' no Easypanel.");
+    process.exit(1); // Desliga o bot se as chaves não existirem
+}
 
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
-// --- FUNÇÕES PRINCIPAIS ---
+// --- O RESTANTE DO CÓDIGO PERMANECE EXATAMENTE O MESMO ---
 
 function normalizarNome(nome) {
     if (!nome) return '';
@@ -148,7 +155,7 @@ app.post('/webhook', (req, res) => {
 });
 
 app.get('/', (req, res) => {
-    res.send('Bot de pagamentos (v6.1 - corrigido) está online!');
+    res.send('Bot de pagamentos (v7 - Variáveis de Ambiente) está online!');
 });
 
 const PORT = process.env.PORT || 3000;
