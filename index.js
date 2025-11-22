@@ -56,7 +56,6 @@ async function processarComando(comando, remetente, jidDestino) {
     }
 }
 
-// ############ A CORREÇÃO ESTÁ AQUI ############
 async function processarMensagem(data) {
     try {
         const remoteJid = data.key.remoteJid; 
@@ -71,17 +70,20 @@ async function processarMensagem(data) {
 
         if (tipo !== 'imageMessage') return;
 
-        // LÓGICA DE DOWNLOAD DA IMAGEM EM ALTA QUALIDADE
-        const mediaKey = data.message.imageMessage.mediaKey;
-        const directPath = data.message.imageMessage.directPath;
-        const urlDownload = `${EVOLUTION_URL}/chat/getBase64FromMedia/${INSTANCIA}`;
+        // ############ A CORREÇÃO ESTÁ AQUI ############
+        // Usando o endpoint correto da sua API para baixar a mídia
+        const urlDownload = `${EVOLUTION_URL}/chat/downloadMedia`; 
+        // ############ FIM DA CORREÇÃO ############
         
         console.log("Baixando imagem em alta qualidade...");
-        const downloadResponse = await axios.post(urlDownload, { directPath, mediaKey }, {
-            headers: { 'apikey': EVOLUTION_API_KEY }
+        // O payload para este endpoint é o próprio objeto da mensagem
+        const downloadResponse = await axios.post(urlDownload, data.message, {
+            headers: { 'apikey': EVOLUTION_API_KEY },
+            responseType: 'arraybuffer' // Importante para receber o arquivo
         });
 
-        const base64Image = downloadResponse.data.base64;
+        // Converte o buffer do arquivo para base64
+        const base64Image = Buffer.from(downloadResponse.data).toString('base64');
         if (!base64Image) {
             console.log("Falha ao baixar a imagem em alta qualidade.");
             return;
@@ -122,7 +124,6 @@ async function processarMensagem(data) {
         }
     }
 }
-// ############ FIM DA CORREÇÃO ############
 
 async function enviarRespostaWhatsApp(jidDestino, texto) {
     try {
@@ -147,7 +148,7 @@ app.post('/webhook', (req, res) => {
 });
 
 app.get('/', (req, res) => {
-    res.send('Bot de pagamentos (v8 - Final) está online!');
+    res.send('Bot de pagamentos (v9 - Finalíssimo) está online!');
 });
 
 const PORT = process.env.PORT || 3000;
