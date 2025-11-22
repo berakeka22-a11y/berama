@@ -10,11 +10,11 @@ app.use(express.json({ limit: '50mb' }));
 // CONFIGURAÇÕES
 // -----------------------------------------------------------------------------
 
-// Credenciais fixas da UltraMsg para contornar o bug do Easypanel
+// UltraMsg fixo (funciona mesmo com Easypanel bugado)
 const ULTRAMSG_INSTANCE = "instance151755";
 const ULTRAMSG_TOKEN = "idyxynn5iaugvpj4";
 
-// Credenciais seguras do ambiente
+// Variáveis do ambiente
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const ADMIN_NUMBER = process.env.ADMIN_NUMBER;
 
@@ -22,7 +22,7 @@ const ADMIN_NUMBER = process.env.ADMIN_NUMBER;
 const ARQUIVO_LISTA = "./lista.json";
 
 // -----------------------------------------------------------------------------
-// INICIALIZAÇÃO DAS APIS
+// INICIALIZAÇÃO
 // -----------------------------------------------------------------------------
 
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
@@ -72,7 +72,7 @@ async function formatarEEnviarLista(destino, titulo) {
 async function processarComando(body, remetente, destino) {
     if (body.toLowerCase() === "!resetar") {
         if (remetente !== `${ADMIN_NUMBER}@c.us`) {
-            console.log("→ Tentativa de reset por não admin:", remetente);
+            console.log("→ Reset bloqueado para não admin");
             return;
         }
 
@@ -97,11 +97,9 @@ async function processarMensagem(data) {
 
         console.log("📸 Imagem recebida");
 
-        // download da imagem
         const down = await axios.get(media, { responseType: 'arraybuffer' });
         const base64Image = Buffer.from(down.data).toString('base64');
 
-        // carregar lista
         let lista = JSON.parse(fs.readFileSync(ARQUIVO_LISTA, 'utf8'));
         const pendentes = lista.filter(x => x.status !== "PAGO").map(x => x.nome);
 
@@ -110,7 +108,6 @@ async function processarMensagem(data) {
             return;
         }
 
-        // Enviar imagem para OpenAI
         const ia = await openai.chat.completions.create({
             model: "gpt-4o",
             max_tokens: 100,
@@ -120,8 +117,8 @@ async function processarMensagem(data) {
                     role: "system",
                     content:
                         `Analise o comprovante. Valor deve ser 75.00 e o nome um destes: [${pendentes.join(", ")}].
-                        Responda APENAS JSON assim:
-                        {"aprovado":true/false,"nomeEncontrado":"string ou null"}`
+                         Responda SOMENTE JSON:
+                         {"aprovado":true/false,"nomeEncontrado":"string ou null"}`
                 },
                 {
                     role: "user",
@@ -143,12 +140,12 @@ async function processarMensagem(data) {
 
         if (resultado.aprovado && resultado.nomeEncontrado) {
             const nomeIA = normalizarNome(resultado.nomeEncontrado);
-            const achou = lista.findIndex(
+            const posicao = lista.findIndex(
                 x => normalizarNome(x.nome) === nomeIA
             );
 
-            if (achou !== -1) {
-                lista[achou].status = "PAGO";
+            if (posicao !== -1) {
+                lista[posicao].status = "PAGO";
                 fs.writeFileSync(ARQUIVO_LISTA, JSON.stringify(lista, null, 2));
                 await formatarEEnviarLista(destino, "Lista Atualizada");
             }
@@ -160,22 +157,25 @@ async function processarMensagem(data) {
 }
 
 // -----------------------------------------------------------------------------
-// WEBHOOK
+// WEBHOOK CORRIGIDO PARA ULTRAMSG
 // -----------------------------------------------------------------------------
 
 app.post("/webhook", (req, res) => {
-    if (!OPENAI_API_KEY || !ADMIN_NUMBER) {
-        console.log("❌ Falta variável de ambiente");
-        return res.sendStatus(500);
-    }
-
     try {
-        const data = req.body.data;
+        const body = req.body;
 
-        if (data && !data.fromMe) {
-            console.log("📥 Webhook recebido");
-            processarMensagem(data);
+        console.log("📩 Webhook recebido:", JSON.stringify(body, null, 2));
+
+        if (!body || !body.data) {
+            console.log("⚠️ Webhook sem data");
+            return res.sendStatus(200);
         }
+
+        const data = body.data;
+
+        if (data.fromMe) return res.sendStatus(200);
+
+        processarMensagem(data);
 
         res.sendStatus(200);
     } catch (e) {
