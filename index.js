@@ -56,7 +56,7 @@ async function processarComando(comando, remetente, jidDestino) {
     }
 }
 
-// ############ CÓDIGO FINAL E DEFINITIVO (v15) ############
+// ############ CÓDIGO FINAL E CORRIGIDO (v16) ############
 async function processarMensagem(data) {
     try {
         const remoteJid = data.key.remoteJid; 
@@ -76,12 +76,10 @@ async function processarMensagem(data) {
         
         const urlDownload = `${EVOLUTION_URL}/chat/downloadMedia`;
         
-        // A Evolution API, em algumas versões, espera um GET mas com o payload no corpo, o que é incomum.
-        // O Axios permite isso usando a propriedade 'data'.
         const downloadResponse = await axios({
             method: 'GET',
             url: urlDownload,
-            data: data.message, // <<<<<< A CORREÇÃO CRÍTICA ESTÁ AQUI
+            data: data.message,
             headers: { 'apikey': EVOLUTION_API_KEY },
             responseType: 'arraybuffer'
         });
@@ -102,7 +100,7 @@ async function processarMensagem(data) {
             model: "gpt-4o",
             messages: [
                 { role: "system", content: `Analise o comprovante. Valor deve ser 75.00 e o nome um destes: [${nomesPendentes}]. Responda APENAS JSON: {"aprovado": boolean, "nomeEncontrado": "string ou null"}` },
-                { role: "user", content: [{ type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Image}` } }] },
+                { role: "user", content: [{ type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Image}` } }] } // <<<<< VÍRGULA REMOVIDA
             ],
             max_tokens: 100, temperature: 0 
         });
@@ -128,4 +126,35 @@ async function processarMensagem(data) {
         }
     }
 }
-// #
+// ############ FIM DO CÓDIGO FINAL ############
+
+async function enviarRespostaWhatsApp(jidDestino, texto) {
+    try {
+        const payload = { number: jidDestino, text: texto };
+        await axios.post(`${EVOLUTION_URL}/message/sendText/${INSTANCIA}`, payload, { 
+            headers: { 'apikey': EVOLUTION_API_KEY, 'Content-Type': 'application/json' } 
+        });
+    } catch (error) {
+        console.error("Erro CRÍTICO ao enviar resposta via Evolution:", error.message);
+        if (error.response) {
+            console.error("Dados da Resposta:", JSON.stringify(error.response.data, null, 2));
+        }
+    }
+}
+
+app.post('/webhook', (req, res) => {
+    const data = req.body;
+    if (data.event === 'messages.upsert' && !data.data?.key?.fromMe) {
+        processarMensagem(data.data).catch(err => console.error("Erro não capturado no webhook:", err));
+    }
+    res.sendStatus(200); 
+});
+
+app.get('/', (req, res) => {
+    res.send('Bot de pagamentos (v16 - Correção de Sintaxe) está online!');
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`🚀 Servidor rodando na porta ${PORT}.`);
+});
