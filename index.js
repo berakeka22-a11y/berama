@@ -1,162 +1,163 @@
-// =========================
-// CONFIGURAÇÕES DO SERVIDOR
-// =========================
-import express from "express";
-import axios from "axios";
-import fs from "fs";
-import path from "path";
+// ===============================
+// BOT PAGAMENTOS EVOLUTION API
+// ===============================
+const express = require("express");
+const axios = require("axios");
+const fs = require("fs");
 
 const app = express();
 app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
-// =========================
-// CONFIGURAÇÕES DA EVOLUTION
-// =========================
+// ===============================
+// CONFIGURAÇÕES
+// ===============================
 const INSTANCE_KEY = "bera";
 const API_KEY = "429683C4C977415CAAFCCE10F7D57E11";
 const BASE_URL = "https://tutoriaisdigitais-evolution-api.ksyx1x.easypanel.host";
 
-// =========================
-// FUNÇÃO PARA ENVIAR TEXTO
-// =========================
-async function sendText(number, message) {
+const LISTA_ARQUIVO = "./lista.json";
+
+// ===============================
+// CARREGAR / SALVAR LISTA
+// ===============================
+function carregarLista() {
+    if (!fs.existsSync(LISTA_ARQUIVO)) return [];
+    try {
+        return JSON.parse(fs.readFileSync(LISTA_ARQUIVO));
+    } catch {
+        return [];
+    }
+}
+
+function salvarLista(lista) {
+    fs.writeFileSync(LISTA_ARQUIVO, JSON.stringify(lista, null, 2));
+}
+
+// ===============================
+// ENVIAR MENSAGEM TEXTO
+// ===============================
+async function enviarTexto(numero, texto) {
     try {
         await axios.post(
             `${BASE_URL}/message/sendText/${INSTANCE_KEY}`,
             {
-                number,
-                text: message
+                number: numero,
+                text: texto
             },
             {
                 headers: {
-                    "apikey": API_KEY,
+                    apikey: API_KEY,
                     "Content-Type": "application/json"
                 }
             }
         );
-        console.log("Mensagem enviada:", message);
-    } catch (error) {
-        console.log("Erro ao enviar texto:", error.response?.data || error.message);
+    } catch (e) {
+        console.log("Erro ao enviar texto:", e.response?.data || e.message);
     }
 }
 
-// =========================
-// FUNÇÃO PARA BAIXAR MÍDIA
-// =========================
-async function downloadMedia(messageId) {
+// ===============================
+// BAIXAR MÍDIA
+// ===============================
+async function baixarMidia(messageId) {
     try {
         const url = `${BASE_URL}/message/downloadMedia/${INSTANCE_KEY}/${messageId}`;
 
         const res = await axios.get(url, {
-            headers: {
-                "apikey": API_KEY
-            }
+            headers: { apikey: API_KEY }
         });
 
         if (!res.data || !res.data.base64) {
-            console.log("Erro: base64 não retornado!");
+            console.log("Media não retornou base64!");
             return null;
         }
 
         return res.data.base64;
 
-    } catch (error) {
-        console.log("Erro no download da mídia:", error.response?.data || error.message);
+    } catch (err) {
+        console.log("ERRO download:", err.response?.data || err.message);
         return null;
     }
 }
 
-// =========================
-// LISTA DE PAGAMENTO
-// =========================
-let lista = [];
-
-// Salvar em arquivo local
-function salvarLista() {
-    fs.writeFileSync("lista.json", JSON.stringify(lista, null, 2));
-}
-
-// Carregar ao iniciar
-if (fs.existsSync("lista.json")) {
-    lista = JSON.parse(fs.readFileSync("lista.json"));
-}
-
-// =========================
-// ROTA DO WEBHOOK
-// =========================
+// ===============================
+// WEBHOOK PRINCIPAL
+// ===============================
 app.post("/webhook", async (req, res) => {
     console.log("📩 Webhook recebido!");
 
-    const body = req.body;
+    const event = req.body;
 
-    // =======================
-    // SEGURANÇA
-    // =======================
-    if (!body || !body.data) {
-        return res.status(400).json({ error: "Invalid payload" });
+    // Já testado: Evolution envia => event.event === "messages.upsert"
+    if (!event || event.event !== "messages.upsert") {
+        return res.sendStatus(200);
     }
 
-    const msg = body.data;
+    const msg = event.data;
+    if (!msg) return res.sendStatus(200);
 
-    // =======================
-    // MENSAGEM TEXTO
-    ============================
-    if (msg.type === "text") {
-        const from = msg.from;
-        const texto = msg.body;
+    const from = msg.from;
+    const type = msg.type;
 
-        console.log("📨 Mensagem recebida:", texto);
+    // ===============================
+    // TEXTO
+    // ===============================
+    if (type === "text") {
+        const texto = msg.body.toLowerCase();
 
-        if (texto.toLowerCase() === "lista") {
+        if (texto === "lista") {
+            const lista = carregarLista();
             if (lista.length === 0) {
-                await sendText(from, "Nenhum pagamento registrado ainda.");
+                await enviarTexto(from, "Nenhum pagamento registrado.");
             } else {
-                await sendText(from, "📃 Lista:\n" + lista.join("\n"));
+                const formatada = lista.map((x, i) =>
+                    `${i + 1}. ${x.numero} — ${x.data}`
+                ).join("\n");
+
+                await enviarTexto(from, "📄 Lista:\n" + formatada);
             }
+            return res.sendStatus(200);
         }
     }
 
-    // =======================
-    // RECEBIMENTO DE IMAGEM (COMPROVANTE)
-    // =======================
-    if (msg.type === "image" || msg.type === "document") {
-        const from = msg.from;
+    // ===============================
+    // IMAGEM (COMPROVANTE)
+    // ===============================
+    if (type === "image" || type === "document") {
         const messageId = msg.id;
 
-        console.log("📷 Recebido comprovante, ID:", messageId);
+        console.log("📷 Comprovante recebido. ID:", messageId);
 
-        const base64 = await downloadMedia(messageId);
+        const base64 = await baixarMidia(messageId);
 
         if (!base64) {
-            console.log("❌ Falha ao baixar imagem.");
-            await sendText(from, "Erro ao processar o comprovante.");
+            await enviarTexto(from, "Erro ao baixar a imagem do comprovante.");
             return res.sendStatus(200);
         }
 
-        console.log("✔ Mídia baixada com sucesso!");
+        // Salvar local
+        const nomeArquivo = `comprovante_${Date.now()}.jpg`;
+        fs.writeFileSync(nomeArquivo, Buffer.from(base64, "base64"));
 
-        // SALVA LOCAL
-        const filename = `comprovante_${Date.now()}.jpg`;
-        const buffer = Buffer.from(base64, "base64");
-        fs.writeFileSync(filename, buffer);
+        // Salvar registro na lista
+        const lista = carregarLista();
+        lista.push({
+            numero: from,
+            data: new Date().toLocaleString(),
+            arquivo: nomeArquivo
+        });
+        salvarLista(lista);
 
-        // ADICIONA NA LISTA
-        lista.push(`Pagamento recebido de ${from} às ${new Date().toLocaleString()}`);
-        salvarLista();
-
-        await sendText(from, "Pagamento confirmado! ✅");
-
-        console.log("✔ Comprovante processado e salvo.");
+        await enviarTexto(from, "Pagamento confirmado! ✅");
+        return res.sendStatus(200);
     }
 
     return res.sendStatus(200);
 });
 
-// =========================
-// INICIAR SERVIDOR
-// =========================
+// ===============================
+// SERVIDOR ONLINE
+// ===============================
 app.listen(80, () => {
-    console.log("Servidor rodando na porta 80");
-    console.log("Webhook ativo e aguardando mensagens...");
+    console.log("🚀 Servidor rodando na porta 80!");
 });
