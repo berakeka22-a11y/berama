@@ -1,227 +1,117 @@
-// ===============================
-// BOT DE PAGAMENTOS - EVOLUTION API
-// Suporta: receber imagem, baixar mídia,
-// enviar para IA, atualizar lista, responder no WhatsApp.
-// ===============================
-
 import express from "express";
 import axios from "axios";
-import fs from "fs";
+import bodyParser from "body-parser";
 
 const app = express();
 app.use(express.json({ limit: "50mb" }));
+app.use(bodyParser.json({ limit: "50mb" }));
 
 // ===============================
-// VARIÁVEIS DE AMBIENTE
+// VARIÁVEIS DA EVOLUTION
 // ===============================
-const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY;
-const EVOLUTION_URL = process.env.EVOLUTION_URL;
-const INSTANCIA = process.env.INSTANCIA;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const ADMIN_NUMBER = process.env.ADMIN_NUMBER;
-const ARQUIVO_LISTA = "./lista.json";
-
-if (!EVOLUTION_API_KEY || !EVOLUTION_URL || !INSTANCIA || !OPENAI_API_KEY) {
-  console.error("❌ ERRO FATAL: Variáveis de ambiente faltando.");
-  process.exit(1);
-}
+const EVOLUTION_API_KEY = "429683C4C977415CAAFCCE10F7D57E11";
+const EVOLUTION_URL = "https://tutoriaisdigitais-evolution-api.ksyx1x.easypanel.host";
+const INSTANCE = "bera";
 
 // ===============================
-// GARANTE ARQUIVO lista.json
+// FUNÇÃO PARA ENVIAR MENSAGEM
 // ===============================
-if (!fs.existsSync(ARQUIVO_LISTA)) {
-  fs.writeFileSync(ARQUIVO_LISTA, "[]");
-}
-
-// ===============================
-// ENVIAR MENSAGEM PARA O WHATSAPP
-// ===============================
-async function enviarTexto(numero, texto) {
+async function enviarMensagem(numero, texto) {
   try {
     await axios.post(
-      `${EVOLUTION_URL}/message/sendText/${INSTANCIA}`,
+      `${EVOLUTION_URL}/message/sendText/${INSTANCE}`,
       {
         number: numero,
-        text: texto,
-      },
-      {
-        headers: { apikey: EVOLUTION_API_KEY },
-      }
-    );
-  } catch (e) {
-    console.log("Erro ao enviar mensagem:", e?.response?.data || e.message);
-  }
-}
-
-// ===============================
-// FORMATA LISTA
-// ===============================
-async function enviarLista(numero, titulo) {
-  const lista = JSON.parse(fs.readFileSync(ARQUIVO_LISTA, "utf8"));
-
-  let msg = `📋 *${titulo}*\n\n`;
-  lista.forEach((p, i) => {
-    msg += `${i + 1}. ${p.nome} — ${p.status === "PAGO" ? "✅" : "⏳"}\n`;
-  });
-
-  msg += `\n💳 *PIX:* sagradoresenha@gmail.com`;
-
-  await enviarTexto(numero, msg);
-}
-
-// ===============================
-// NORMALIZA NOME
-// ===============================
-function normalizarNome(nome) {
-  return nome.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-}
-
-// ===============================
-// PROCESSAR MENSAGEM RECEBIDA
-// ===============================
-async function processarMensagem(data) {
-  try {
-    const numero = data.key.remoteJid;
-    const texto =
-      data.message?.conversation ||
-      data.message?.extendedTextMessage?.text ||
-      null;
-
-    // ===============================
-    // COMANDO: RESETAR
-    // ===============================
-    if (texto && texto.toLowerCase() === "!resetar") {
-      if (!numero.includes(ADMIN_NUMBER)) return;
-
-      let lista = JSON.parse(fs.readFileSync(ARQUIVO_LISTA, "utf8"));
-      lista.forEach((p) => (p.status = "PENDENTE"));
-      fs.writeFileSync(ARQUIVO_LISTA, JSON.stringify(lista, null, 2));
-
-      await enviarLista(numero, "Lista Resetada");
-      return;
-    }
-
-    // ===============================
-    // RECEBER IMAGEM
-    // ===============================
-    const tipo = data.messageType;
-    if (tipo !== "imageMessage") return;
-
-    console.log("📥 Recebendo imagem…");
-
-    const urlDownload = `${EVOLUTION_URL}/chat/downloadMedia`;
-
-    const baixar = await axios.post(urlDownload, data.message, {
-      headers: { apikey: EVOLUTION_API_KEY },
-      responseType: "arraybuffer",
-    });
-
-    const base64 = Buffer.from(baixar.data).toString("base64");
-
-    if (!base64) {
-      console.log("Erro ao converter imagem.");
-      return;
-    }
-
-    // ===============================
-    // Nomes pendentes
-    // ===============================
-    let lista = JSON.parse(fs.readFileSync(ARQUIVO_LISTA, "utf8"));
-    const pendentes = lista
-      .filter((p) => p.status !== "PAGO")
-      .map((p) => p.nome)
-      .join(", ");
-
-    if (!pendentes) {
-      await enviarTexto(numero, "Todos já pagaram! 🎉");
-      return;
-    }
-
-    // ===============================
-    // ANALISAR COMPROVANTE NA OPENAI
-    // ===============================
-
-    const resposta = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      {
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: `Analise o comprovante de PIX. Valor deve ser 75.00 e nome deve estar entre: [${pendentes}]. 
-              Retorne apenas JSON no formato:
-              {"aprovado": boolean, "nomeEncontrado": "string ou null"} `,
-          },
-          {
-            role: "user",
-            content: [
-              {
-                type: "image_url",
-                image_url: {
-                  url: `data:image/jpeg;base64,${base64}`,
-                },
-              },
-            ],
-          },
-        ],
+        textMessage: { text: texto }
       },
       {
         headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
+          "apikey": EVOLUTION_API_KEY,
+          "Content-Type": "application/json"
+        }
       }
     );
 
-    let resultado = JSON.parse(
-      resposta.data.choices[0].message.content
-        .replace(/```json|```/g, "")
-        .trim()
-    );
-
-    console.log("📊 Resultado IA:", resultado);
-
-    // ===============================
-    // ATUALIZA LISTA
-    // ===============================
-    if (resultado.aprovado && resultado.nomeEncontrado) {
-      const nomeIA = normalizarNome(resultado.nomeEncontrado);
-
-      const idx = lista.findIndex(
-        (p) => normalizarNome(p.nome) === nomeIA
-      );
-
-      if (idx !== -1) {
-        lista[idx].status = "PAGO";
-        fs.writeFileSync(ARQUIVO_LISTA, JSON.stringify(lista, null, 2));
-
-        await enviarLista(numero, "Lista Atualizada");
-      }
-    }
-  } catch (e) {
-    console.log("ERRO processarMensagem:", e.message);
+    console.log("Mensagem enviada para:", numero);
+  } catch (err) {
+    console.log("Erro ao enviar:", err.response?.data || err.message);
   }
 }
 
 // ===============================
-// WEBHOOK
+// FUNÇÃO PARA ENVIAR MÍDIA BASE64
 // ===============================
-app.post("/webhook", (req, res) => {
-  if (req.body.event === "messages.upsert") {
-    processarMensagem(req.body.data);
+async function enviarMidiaBase64(numero, nome, base64, mimetype) {
+  try {
+    await axios.post(
+      `${EVOLUTION_URL}/message/sendMedia/${INSTANCE}`,
+      {
+        number: numero,
+        mediaMessage: {
+          fileName: nome,
+          mimeType: mimetype,
+          data: base64
+        }
+      },
+      {
+        headers: {
+          "apikey": EVOLUTION_API_KEY,
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+    console.log("Mídia enviada para:", numero);
+  } catch (err) {
+    console.log("Erro ao enviar mídia:", err.response?.data || err.message);
+  }
+}
+
+// ===============================
+// ROTA WEBHOOK (ESTE É O QUE O EVOLUTION USA!)
+// ===============================
+app.post("/webhook", async (req, res) => {
+  console.log("📩 WEBHOOK RECEBIDO");
+  console.log(JSON.stringify(req.body, null, 2));
+
+  res.status(200).send("OK");
+
+  // Verifica se é mensagem recebida
+  const message = req.body?.message;
+
+  if (!message) return;
+
+  const from = message.from;
+  const text = message.text?.body || null;
+
+  // ===========================
+  // SE FOR MENSAGEM DE TEXTO
+  // ===========================
+  if (text) {
+    console.log("Texto recebido:", text);
+
+    await enviarMensagem(from, "Recebi sua mensagem 😎");
   }
 
-  res.sendStatus(200);
-});
+  // ===========================
+  // SE FOR MÍDIA BASE64
+  // ===========================
+  if (message.type === "media") {
+    const base64 = message.media?.data;
+    const mimetype = message.media?.mimeType;
+    const filename = message.media?.fileName || "arquivo";
 
-app.get("/", (req, res) => {
-  res.send("BOT OK 🔥");
+    console.log("📸 Mídia recebida:", mimetype);
+
+    if (base64) {
+      await enviarMidiaBase64(from, filename, base64, mimetype);
+    }
+  }
 });
 
 // ===============================
-// START SERVER
+// INICIA O SERVIDOR
 // ===============================
-const PORT = process.env.PORT || 80;
-app.listen(PORT, () =>
-  console.log("🚀 Servidor rodando na porta " + PORT)
-);
+app.listen(3000, () => {
+  console.log("Servidor rodando na porta 3000");
+});
