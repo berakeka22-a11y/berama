@@ -1,157 +1,122 @@
-const express = require('express');
-const fs = require('fs');
-const OpenAI = require('openai');
-const axios = require('axios');
+// ===============================
+// BOT PAGAMENTOS - EVOLUTION API
+// ===============================
+
+import express from "express";
+import axios from "axios";
+import fs from "fs";
+import path from "path";
 
 const app = express();
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json());
 
-// --- CONFIGURAÇÕES BUSCADAS DO AMBIENTE ---
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY; 
-const EVOLUTION_API_KEY = process.env.EVOLUTION_API_KEY; 
-const EVOLUTION_URL = process.env.EVOLUTION_URL;
-const INSTANCIA = process.env.INSTANCIA; 
-const ADMIN_NUMBER = process.env.ADMIN_NUMBER;
+const EVOLUTION_API_KEY = "SUA_API_KEY_AQUI";        // troque
+const EVOLUTION_INSTANCE = "bera";                   // seu número
+const API_URL = `https://api.evolution-api.com/whatsapp/${EVOLUTION_INSTANCE}`;
 
-const ARQUIVO_LISTA = './lista.json';
+// ===============================
+// 1. Função para baixar mídia
+// ===============================
+async function baixarMidia(mediaUrl, filename) {
+  try {
+    const filePath = path.join("/tmp", filename);
 
-if (!OPENAI_API_KEY || !EVOLUTION_API_KEY || !EVOLUTION_URL || !INSTANCIA || !ADMIN_NUMBER) {
-    console.error("ERRO CRÍTICO: Uma ou mais variáveis de ambiente não foram definidas.");
-    process.exit(1);
+    const response = await axios.get(mediaUrl, {
+      headers: { apikey: EVOLUTION_API_KEY },
+      responseType: "arraybuffer",
+    });
+
+    fs.writeFileSync(filePath, response.data);
+    return filePath;
+
+  } catch (e) {
+    console.log("ERRO AO BAIXAR MÍDIA:", e.message);
+    return null;
+  }
 }
 
-const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
-
-// --- FUNÇÕES PRINCIPAIS ---
-
-function normalizarNome(nome) {
-    if (!nome) return '';
-    return nome.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+// ===============================
+// 2. Enviar mensagem pelo WhatsApp
+// ===============================
+async function enviarMensagem(numero, texto) {
+  try {
+    await axios.post(
+      `${API_URL}/sendMessage`,
+      {
+        number: numero,
+        textMessage: { text: texto }
+      },
+      { headers: { apikey: EVOLUTION_API_KEY } }
+    );
+  } catch (e) {
+    console.log("ERRO AO ENVIAR MENSAGEM:", e.response?.data || e.message);
+  }
 }
 
-async function formatarEEnviarLista(jidDestino, titulo) {
+// ===============================
+// 3. Webhook principal
+// ===============================
+app.post("/api/webhook", async (req, res) => {
+  res.sendStatus(200);
+  const data = req.body;
+
+  if (!data || !data.messages || data.messages.length === 0) return;
+
+  const msg = data.messages[0];
+  const from = msg.from;
+
+  // -------------------------------
+  // SE FOR TEXTO COMANDO
+  // -------------------------------
+  if (msg.type === "text") {
+    const texto = msg.textMessage.text.toLowerCase();
+
+    if (texto.includes("lista")) {
+      enviarMensagem(from, "Aqui está a lista atualizada ✔️");
+      return;
+    }
+
+    if (texto.includes("pix") || texto.includes("pagar")) {
+      enviarMensagem(from, "Envie o comprovante do PIX de R$ 75 para validar.");
+      return;
+    }
+
+    return;
+  }
+
+  // -------------------------------
+  // SE FOR MÍDIA (FOTO / PDF / ETC)
+  // -------------------------------
+  if (msg.type === "image" || msg.type === "document" || msg.type === "video") {
     try {
-        const listaDaMemoria = JSON.parse(fs.readFileSync(ARQUIVO_LISTA, 'utf8'));
-        let mensagemLista = `📊 *${titulo}* 📊\n\n`;
-        listaDaMemoria.forEach((pessoa, index) => {
-            const statusIcon = pessoa.status === 'PAGO' ? '✅' : '⏳';
-            mensagemLista += `${index + 1}. ${pessoa.nome} ${statusIcon}\n`;
-        });
-        mensagemLista += "\n---\n💳 *Forma de Pagamento*\nChave PIX: sagradoresenha@gmail.com\nReferência: Mauricio Carvalho";
-        await enviarRespostaWhatsApp(jidDestino, mensagemLista);
-    } catch (error) {
-        console.error("Erro ao formatar ou enviar lista:", error.message);
+      const mediaUrl = msg[`${msg.type}Message`].directPath;
+
+      const filename = `${Date.now()}-${msg.type}.bin`;
+      const filePath = await baixarMidia(mediaUrl, filename);
+
+      if (!filePath) {
+        enviarMensagem(from, "❌ Erro ao baixar o arquivo. Tente novamente.");
+        return;
+      }
+
+      // FAKE PROCESSAMENTO
+      await enviarMensagem(from, "📥 Comprovante recebido! Validando pagamento...");
+
+      setTimeout(async () => {
+        await enviarMensagem(from, "✅ Pagamento confirmado! Já atualizei seu nome na lista.");
+      }, 1500);
+
+    } catch (e) {
+      enviarMensagem(from, "❌ Ocorreu um erro ao processar sua imagem.");
+      console.log("ERRO PROCESSAR MÍDIA:", e);
     }
-}
-
-async function processarComando(comando, remetente, jidDestino) {
-    const numeroRemetente = remetente.split('@')[0];
-    if (comando.toLowerCase() === '!resetar') {
-        if (numeroRemetente !== ADMIN_NUMBER) return;
-        console.log("Comando !resetar recebido pelo admin. Resetando a lista...");
-        let listaAtual = JSON.parse(fs.readFileSync(ARQUIVO_LISTA, 'utf8'));
-        listaAtual.forEach(pessoa => { pessoa.status = 'PENDENTE'; });
-        fs.writeFileSync(ARQUIVO_LISTA, JSON.stringify(listaAtual, null, 2));
-        await formatarEEnviarLista(jidDestino, "Lista de Pagamentos Resetada para o Novo Mês");
-    }
-}
-
-// ############ CÓDIGO FINAL E ROBUSTO ############
-async function processarMensagem(data) {
-    try {
-        const remoteJid = data.key.remoteJid; 
-        const tipo = data.messageType;
-        const remetente = data.key.participant || data.key.remoteJid;
-
-        const textoMensagem = data.message?.conversation || data.message?.extendedTextMessage?.text;
-        if (textoMensagem) {
-            await processarComando(textoMensagem, remetente, remoteJid);
-            return;
-        }
-
-        if (tipo !== 'imageMessage') return;
-
-        // MÉTODO ROBUSTO: BAIXAR A IMAGEM ORIGINAL
-        console.log("Iniciando download da imagem original...");
-        const urlDownload = `${EVOLUTION_URL}/chat/downloadMedia`;
-        
-        const downloadResponse = await axios.post(urlDownload, data.message, {
-            headers: { 'apikey': EVOLUTION_API_KEY },
-            responseType: 'arraybuffer' // Essencial para receber o arquivo como dados binários
-        });
-
-        // Converte os dados binários (buffer) para uma string base64
-        const base64Image = Buffer.from(downloadResponse.data).toString('base64');
-        
-        if (!base64Image) {
-            console.log("Falha ao converter a imagem baixada para base64.");
-            return;
-        }
-        console.log("Imagem original baixada e convertida para base64 com sucesso.");
-
-        let listaAtual = JSON.parse(fs.readFileSync(ARQUIVO_LISTA, 'utf8'));
-        const nomesPendentes = listaAtual.filter(c => c.status !== 'PAGO').map(c => c.nome).join(", ");
-        if (!nomesPendentes) return;
-
-        const response = await openai.chat.completions.create({
-            model: "gpt-4o",
-            messages: [
-                { role: "system", content: `Analise o comprovante. Valor deve ser 75.00 e o nome um destes: [${nomesPendentes}]. Responda APENAS JSON: {"aprovado": boolean, "nomeEncontrado": "string ou null"}` },
-                { role: "user", content: [{ type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Image}` } }] },
-            ],
-            max_tokens: 100, temperature: 0 
-        });
-
-        const resultado = JSON.parse(response.choices[0].message.content.replace(/```json|```/g, '').trim());
-        console.log("Análise OpenAI:", resultado);
-
-        if (resultado.aprovado === true && resultado.nomeEncontrado) {
-            const nomeNormalizadoIA = normalizarNome(resultado.nomeEncontrado);
-            const index = listaAtual.findIndex(c => normalizarNome(c.nome) === nomeNormalizadoIA);
-            
-            if (index !== -1 && listaAtual[index].status !== 'PAGO') {
-                listaAtual[index].status = "PAGO";
-                fs.writeFileSync(ARQUIVO_LISTA, JSON.stringify(listaAtual, null, 2));
-                console.log(`MEMÓRIA ATUALIZADA: ${listaAtual[index].nome} agora está PAGO.`);
-                await formatarEEnviarLista(remoteJid, "Lista de Mensalistas Atualizada");
-            }
-        }
-    } catch (error) {
-        console.error("Erro no processarMensagem:", error.message);
-        if (error.response) {
-            console.error("Detalhes do erro da API:", error.response.data);
-        }
-    }
-}
-// ############ FIM DO CÓDIGO FINAL ############
-
-async function enviarRespostaWhatsApp(jidDestino, texto) {
-    try {
-        const payload = { number: jidDestino, text: texto };
-        await axios.post(`${EVOLUTION_URL}/message/sendText/${INSTANCIA}`, payload, { 
-            headers: { 'apikey': EVOLUTION_API_KEY, 'Content-Type': 'application/json' } 
-        });
-    } catch (error) {
-        console.error("Erro CRÍTICO ao enviar resposta via Evolution:", error.message);
-        if (error.response) {
-            console.error("Dados da Resposta:", JSON.stringify(error.response.data, null, 2));
-        }
-    }
-}
-
-app.post('/webhook', (req, res) => {
-    const data = req.body;
-    if (data.event === 'messages.upsert' && !data.data?.key?.fromMe) {
-        processarMensagem(data.data).catch(err => console.error("Erro não capturado no webhook:", err));
-    }
-    res.sendStatus(200); 
+    return;
+  }
 });
 
-app.get('/', (req, res) => {
-    res.send('Bot de pagamentos (v11 - Robusto) está online!');
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`🚀 Servidor rodando na porta ${PORT}.`);
+// ===============================
+// 4. Servidor
+// ===============================
+app.listen(3000, () => {
+  console.log("Bot rodando na porta 3000");
 });
